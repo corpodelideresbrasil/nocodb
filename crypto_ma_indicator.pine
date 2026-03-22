@@ -1,11 +1,11 @@
 //@version=6
-indicator("Crypto MA Crossover Indicator", overlay=true)
+strategy("Crypto MA Crossover Strategy", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
 
 // --- Inputs ---
 short_len = input.int(9, "Short SMA Length", minval=1, tooltip="Period for the short-term Simple Moving Average")
 long_len = input.int(21, "Long SMA Length", minval=1, tooltip="Period for the long-term Simple Moving Average")
-slope_period = input.int(5, "Slope Lookback Period", minval=1, tooltip="Number of bars to calculate the average slope (horizontal detection)")
-slope_threshold = input.float(0.1, "Slope Threshold (%)", minval=0.0, step=0.01, tooltip="Threshold for horizontal movement detection. Below this %, the MA is considered horizontal.")
+slope_period = input.int(5, "Slope Lookback Period", minval=1, tooltip="Number of bars to calculate the linear regression slope (horizontal detection)")
+slope_threshold = input.float(0.02, "Slope Threshold (ATR units)", minval=0.0, step=0.01, tooltip="Threshold for horizontal movement detection. Normalized by ATR.")
 
 // --- Calculations ---
 short_ma = ta.sma(close, short_len)
@@ -36,26 +36,48 @@ bullish_trend = is_bullish_alert and close > long_ma
 // Tendencia de baixa: alerta de baixa e fechamento abaixo da longa
 bearish_trend = is_bearish_alert and close < long_ma
 
+// Compra: Alerta de alta e fechamento acima da longa
+buy_signal = bullish_trend and not bullish_trend[1]
+// Venda: Alerta de baixa e fechamento abaixo da longa
+sell_signal = bearish_trend and not bearish_trend[1]
+
 // Fecha operação de compra: alerta de alta e fechamento abaixo da longa
 close_buy = is_bullish_alert and close < long_ma
 // Fecha operação de venda: alerta de baixa e fechamento acima da longa
 close_sell = is_bearish_alert and close > long_ma
 
-// Detectar Consolidação (Mercado Lateral)
-// Calcula a mudança percentual das médias em relação ao fechamento
-short_slope = (short_ma - short_ma[slope_period]) / close[slope_period] * 100
-long_slope = (long_ma - long_ma[slope_period]) / close[slope_period] * 100
+// --- Melhora no Cálculo da Inclinação (Engenharia) ---
+// Usamos Inclinação de Regressão Linear (Derivada da reta de melhor ajuste)
+// Normalizamos pela volatilidade (ATR) para tornar o threshold universal entre ativos
+atr = ta.atr(14)
+short_slope_raw = ta.linreg(short_ma, slope_period, 0) - ta.linreg(short_ma, slope_period, 1)
+long_slope_raw = ta.linreg(long_ma, slope_period, 0) - ta.linreg(long_ma, slope_period, 1)
 
-// Mercado é considerado lateral se ambas as médias estiverem "horizontais" (dentro do threshold)
-is_lateral = math.abs(short_slope) < slope_threshold and math.abs(long_slope) < slope_threshold
+// Inclinação Normalizada (Unidades de ATR por barra)
+short_slope_norm = short_slope_raw / atr
+long_slope_norm = long_slope_raw / atr
+
+// Mercado é considerado lateral se ambas as médias estiverem "horizontais" (dentro do threshold em ATRs)
+is_lateral = math.abs(short_slope_norm) < slope_threshold and math.abs(long_slope_norm) < slope_threshold
 
 // Lateral / Não opera: Mesma condição de fechar operação + filtro de consolidação
 is_neutral = (is_bullish_alert and close < long_ma) or (is_bearish_alert and close > long_ma) or is_lateral
 
-// Compra: Alerta de alta e fechamento acima da longa, e NÃO estar lateral
-buy_signal = bullish_trend and not bullish_trend[1] and not is_lateral
-// Venda: Alerta de baixa e fechamento abaixo da longa, e NÃO estar lateral
-sell_signal = bearish_trend and not bearish_trend[1] and not is_lateral
+// Sinais de Estratégia
+if buy_signal and not is_lateral
+    strategy.entry("Long", strategy.long)
+
+if sell_signal and not is_lateral
+    strategy.entry("Short", strategy.short)
+
+if close_buy
+    strategy.close("Long", comment="Exit Long")
+
+if close_sell
+    strategy.close("Short", comment="Exit Short")
+
+if is_lateral
+    strategy.close_all(comment="Lateral - Fechando Tudo")
 
 // --- Visual Plotting ---
 plot(short_ma, color=color.blue, linewidth=2, title="Short SMA")
@@ -75,11 +97,3 @@ plotshape(close_sell and not close_sell[1], title="Fechar Venda", style=shape.la
 // Plot reversal markers
 plotchar(high_reversal, title="Reversão Alta", char='▼', location=location.abovebar, color=color.yellow, size=size.tiny)
 plotchar(low_reversal, title="Reversão Baixa", char='▲', location=location.belowbar, color=color.yellow, size=size.tiny)
-
-// --- Alerts ---
-alertcondition(bull_cross, title="Alerta de Alta (Cruzamento)", message="Curta cruzou a longa para cima!")
-alertcondition(bear_cross, title="Alerta de Baixa (Cruzamento)", message="Curta cruzou a longa para baixo!")
-alertcondition(buy_signal, title="Sinal de Compra", message="Tendência de Alta Confirmada: Compra!")
-alertcondition(sell_signal, title="Sinal de Venda", message="Tendência de Baixa Confirmada: Venda!")
-alertcondition(high_reversal, title="Reversão de Inclinação (Alta)", message="Inclinação da MA curta virou para baixo")
-alertcondition(low_reversal, title="Reversão de Inclinação (Baixa)", message="Inclinação da MA curta virou para cima")
