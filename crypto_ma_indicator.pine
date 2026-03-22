@@ -4,6 +4,8 @@ indicator("Crypto MA Crossover Indicator", overlay=true)
 // --- Inputs ---
 short_len = input.int(9, "Short SMA Length", minval=1, tooltip="Period for the short-term Simple Moving Average")
 long_len = input.int(21, "Long SMA Length", minval=1, tooltip="Period for the long-term Simple Moving Average")
+slope_period = input.int(5, "Slope Lookback Period", minval=1, tooltip="Number of bars to calculate the average slope (horizontal detection)")
+slope_threshold = input.float(0.1, "Slope Threshold (%)", minval=0.0, step=0.01, tooltip="Threshold for horizontal movement detection. Below this %, the MA is considered horizontal.")
 
 // --- Calculations ---
 short_ma = ta.sma(close, short_len)
@@ -39,20 +41,28 @@ close_buy = is_bullish_alert and close < long_ma
 // Fecha operação de venda: alerta de baixa e fechamento acima da longa
 close_sell = is_bearish_alert and close > long_ma
 
-// Lateral / Não opera: Mesma condição de fechar operação
-is_neutral = (is_bullish_alert and close < long_ma) or (is_bearish_alert and close > long_ma)
+// Detectar Consolidação (Mercado Lateral)
+// Calcula a mudança percentual das médias em relação ao fechamento
+short_slope = (short_ma - short_ma[slope_period]) / close[slope_period] * 100
+long_slope = (long_ma - long_ma[slope_period]) / close[slope_period] * 100
 
-// Compra: Alerta de alta e fechamento acima da longa
-buy_signal = bullish_trend and not bullish_trend[1]
-// Venda: Alerta de baixa e fechamento abaixo da longa
-sell_signal = bearish_trend and not bearish_trend[1]
+// Mercado é considerado lateral se ambas as médias estiverem "horizontais" (dentro do threshold)
+is_lateral = math.abs(short_slope) < slope_threshold and math.abs(long_slope) < slope_threshold
+
+// Lateral / Não opera: Mesma condição de fechar operação + filtro de consolidação
+is_neutral = (is_bullish_alert and close < long_ma) or (is_bearish_alert and close > long_ma) or is_lateral
+
+// Compra: Alerta de alta e fechamento acima da longa, e NÃO estar lateral
+buy_signal = bullish_trend and not bullish_trend[1] and not is_lateral
+// Venda: Alerta de baixa e fechamento abaixo da longa, e NÃO estar lateral
+sell_signal = bearish_trend and not bearish_trend[1] and not is_lateral
 
 // --- Visual Plotting ---
 plot(short_ma, color=color.blue, linewidth=2, title="Short SMA")
 plot(long_ma, color=color.orange, linewidth=2, title="Long SMA")
 
-// Plot background colors for trends
-bgcolor(bullish_trend ? color.new(color.green, 90) : bearish_trend ? color.new(color.red, 90) : is_neutral ? color.new(color.gray, 90) : na)
+// Plot background colors for trends and consolidation
+bgcolor(is_lateral ? color.new(color.yellow, 80) : bullish_trend ? color.new(color.green, 90) : bearish_trend ? color.new(color.red, 90) : is_neutral ? color.new(color.gray, 90) : na)
 
 // Plot shapes for signals
 plotshape(buy_signal, title="Compra", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="COMPRA")
