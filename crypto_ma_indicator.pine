@@ -1,9 +1,9 @@
-//@version=5
+//@version=6
 indicator("Crypto MA Crossover Indicator", overlay=true)
 
 // --- Inputs ---
-short_len = input.int(9, "Short SMA Length", minval=1, help="Period for the short-term Simple Moving Average")
-long_len = input.int(21, "Long SMA Length", minval=1, help="Period for the long-term Simple Moving Average")
+short_len = input.int(9, "Short SMA Length", minval=1, tooltip="Period for the short-term Simple Moving Average")
+long_len = input.int(21, "Long SMA Length", minval=1, tooltip="Period for the long-term Simple Moving Average")
 
 // --- Calculations ---
 short_ma = ta.sma(close, short_len)
