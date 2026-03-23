@@ -1,0 +1,78 @@
+//@version=6
+strategy("Raul Lateralidade 0.6% v2", overlay=true, margin_long=100, margin_short=100)
+
+// ==========================================
+// --- INPUTS ---
+// ==========================================
+lenCurta = input.int(9, "SMA Curta", tooltip="Período da Média Móvel Simples de curto prazo.")
+lenLonga = input.int(21, "SMA Longa", tooltip="Período da Média Móvel Simples de longo prazo.")
+
+// Configurações de Lateralidade (Regressão Linear / ATR)
+// Usamos a inclinação da regressão linear normalizada pelo ATR para um filtro adaptativo.
+lenSlope = input.int(20, "Lookback Lateralidade", minval=1, tooltip="Período de observação para detectar a tendência (ou falta dela).")
+thrFlat  = input.float(0.6, "Threshold Lateralidade", minval=0.1, maxval=5.0, step=0.1, tooltip="Limite de inclinação (normalizado pelo ATR). Valores menores tornam o filtro mais 'rígido'.") / 100
+
+// ==========================================
+// --- CÁLCULOS ---
+// ==========================================
+smaCurta = ta.sma(close, lenCurta)
+smaLonga = ta.sma(close, lenLonga)
+
+// Plot das Médias
+plot(smaCurta, color=color.orange, linewidth=2, title="SMA Curta")
+plot(smaLonga, color=color.blue, linewidth=2, title="SMA Longa")
+
+// --- LÓGICA DE LATERALIDADE (ROBUSTA) ---
+// Calculamos o 'Slope' (inclinação) da Regressão Linear.
+// Dividimos pelo ATR para que o valor seja comparável entre diferentes ativos e tempos gráficos.
+slope = ta.linreg(close, lenSlope, 0) - ta.linreg(close, lenSlope, 1)
+atr = ta.atr(lenSlope)
+normalizedSlope = math.abs(slope / atr)
+
+// O estado de consolidação ocorre quando a inclinação é muito baixa (perto de zero)
+isConsolid = normalizedSlope < thrFlat
+
+// Destaque visual no fundo do gráfico
+bgcolor(isConsolid ? color.new(color.yellow, 85) : na, title="Área de Consolidação")
+
+// ==========================================
+// --- ESTRATÉGIA ---
+// ==========================================
+crossUp   = ta.crossover(smaCurta, smaLonga)
+crossDown = ta.crossunder(smaCurta, smaLonga)
+
+// Preço médio de entrada para controle de Break-even
+entryPrice = strategy.position_avg_price
+
+// --- SAÍDAS ---
+// NOTA IMPORTANTE: A lógica de fechar se 'close < entryPrice' é extremamente restritiva.
+// Ela fecha a operação no prejuízo ou no zero a zero imediatamente.
+// Considere adicionar um Stop Loss fixo ou uma margem de respiro.
+if strategy.position_size > 0 and close < entryPrice
+    strategy.close("Long", comment="Breakeven/Loss")
+
+if strategy.position_size < 0 and close > entryPrice
+    strategy.close("Short", comment="Breakeven/Loss")
+
+// Saída por perda de força (preço cruza a média curta contra a posição)
+if strategy.position_size > 0 and close < smaCurta
+    strategy.close("Long", comment="Sem Força")
+
+if strategy.position_size < 0 and close > smaCurta
+    strategy.close("Short", comment="Sem Força")
+
+// --- ENTRADAS ---
+// 'wasFlat' garante que a estratégia não estava posicionada na barra anterior.
+wasFlat = strategy.position_size[1] == 0 and strategy.position_size == 0
+
+// Setup de preço acima/abaixo das médias
+longSetup  = smaCurta > smaLonga and close > smaCurta
+shortSetup = smaCurta < smaLonga and close < smaCurta
+
+// Entrada de Compra: Cross ou Setup, desde que NÃO esteja em Consolidação
+if (crossUp or (wasFlat and longSetup)) and not isConsolid
+    strategy.entry("Long", strategy.long)
+
+// Entrada de Venda: Cross ou Setup, desde que NÃO esteja em Consolidação
+if (crossDown or (wasFlat and shortSetup)) and not isConsolid
+    strategy.entry("Short", strategy.short)
