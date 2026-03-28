@@ -1,0 +1,72 @@
+//@version=6
+strategy("Raul Lateralidade 0.6% v2", overlay=true, margin_long=100, margin_short=100)
+
+// ==========================================
+// --- INPUTS ---
+// ==========================================
+lenCurta = input.int(9, "SMA Curta", tooltip="Média Móvel Simples de curto prazo.")
+lenLonga = input.int(21, "SMA Longa", tooltip="Média Móvel Simples de longo prazo.")
+
+// Configurações de Lateralidade (Regressão Linear / ATR)
+lenSlope = input.int(20, "Lookback Lateralidade", minval=1, tooltip="Período para medir a inclinação da tendência.")
+// O valor de threshold (0.6) é comparado ao Slope normalizado pelo ATR.
+// Isso torna o filtro "agnóstico" ao preço nominal do ativo.
+thrFlat  = input.float(0.6, "Threshold Lateralidade", minval=0.1, maxval=5.0, step=0.1, tooltip="Limite de inclinação normalizado pelo ATR. Funciona igualmente para ativos caros (BTC) ou baratos (DOGE).")
+
+// ==========================================
+// --- CÁLCULOS ---
+// ==========================================
+smaCurta = ta.sma(close, lenCurta)
+smaLonga = ta.sma(close, lenLonga)
+
+// Plot das Médias
+plot(smaCurta, color=color.orange, linewidth=2, title="SMA Curta")
+plot(smaLonga, color=color.blue, linewidth=2, title="SMA Longa")
+
+// --- LÓGICA DE LATERALIDADE (ROBUSTA E INDEPENDENTE DE PREÇO) ---
+// 1. Calculamos a inclinação (Slope) da Regressão Linear (unidade: preço/barra)
+slope = ta.linreg(close, lenSlope, 0) - ta.linreg(close, lenSlope, 1)
+// 2. Calculamos a volatilidade média (ATR) no mesmo período (unidade: preço)
+atr = ta.atr(lenSlope)
+// 3. Normalizamos: Slope / ATR (unidade: 1/barra).
+// Isso mede quantos ATRs o preço se desloca por barra.
+normalizedSlope = math.abs(slope / atr)
+
+// Consideramos consolidado se o deslocamento for menor que uma fração da volatilidade (ajustada pelo threshold)
+isConsolid = normalizedSlope < (thrFlat / 10)
+
+// Destaque visual: Fundo amarelo indica que o mercado está "lateral" (sem tendência clara)
+bgcolor(isConsolid ? color.new(color.yellow, 85) : na, title="Área de Consolidação")
+
+// ==========================================
+// --- ESTRATÉGIA ---
+// ==========================================
+crossUp   = ta.crossover(smaCurta, smaLonga)
+crossDown = ta.crossunder(smaCurta, smaLonga)
+entryPrice = strategy.position_avg_price
+
+// --- SAÍDAS ---
+// Saída agressiva se o preço recuar abaixo da entrada (Breakeven/Stop Curto)
+if strategy.position_size > 0 and close < entryPrice
+    strategy.close("Long", comment="Breakeven/Loss")
+if strategy.position_size < 0 and close > entryPrice
+    strategy.close("Short", comment="Breakeven/Loss")
+
+// Saída por perda de força (fechamento cruza a média curta)
+if strategy.position_size > 0 and close < smaCurta
+    strategy.close("Long", comment="Sem Força")
+if strategy.position_size < 0 and close > smaCurta
+    strategy.close("Short", comment="Sem Força")
+
+// --- ENTRADAS ---
+wasFlat = strategy.position_size[1] == 0 and strategy.position_size == 0
+longSetup  = smaCurta > smaLonga and close > smaCurta
+shortSetup = smaCurta < smaLonga and close < smaCurta
+
+// Entrada Long: Cruzamento ou Setup, bloqueado se estiver em Consolidação
+if (crossUp or (wasFlat and longSetup)) and not isConsolid
+    strategy.entry("Long", strategy.long)
+
+// Entrada Short: Cruzamento ou Setup, bloqueado se estiver em Consolidação
+if (crossDown or (wasFlat and shortSetup)) and not isConsolid
+    strategy.entry("Short", strategy.short)
