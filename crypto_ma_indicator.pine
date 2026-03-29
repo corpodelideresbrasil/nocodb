@@ -1,0 +1,99 @@
+//@version=6
+strategy("Crypto MA Crossover Strategy", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// --- Inputs ---
+short_len = input.int(9, "Short SMA Length", minval=1, tooltip="Period for the short-term Simple Moving Average")
+long_len = input.int(21, "Long SMA Length", minval=1, tooltip="Period for the long-term Simple Moving Average")
+slope_period = input.int(5, "Slope Lookback Period", minval=1, tooltip="Number of bars to calculate the linear regression slope (horizontal detection)")
+slope_threshold = input.float(0.02, "Slope Threshold (ATR units)", minval=0.0, step=0.01, tooltip="Threshold for horizontal movement detection. Normalized by ATR.")
+
+// --- Calculations ---
+short_ma = ta.sma(close, short_len)
+long_ma = ta.sma(close, long_len)
+
+// --- States and Alerts ---
+// Alerta de alta: Curta acima da longa
+is_bullish_alert = short_ma > long_ma
+// Alerta de baixa: Curta abaixo da longa
+is_bearish_alert = short_ma < long_ma
+
+// Crossover triggers
+bull_cross = ta.crossover(short_ma, long_ma)
+bear_cross = ta.crossunder(short_ma, long_ma)
+
+// --- Inclinação (Slope) and Reversals ---
+short_slope_pos = short_ma > short_ma[1]
+short_slope_neg = short_ma < short_ma[1]
+
+// Reversão da alta: inclinação da curta muda de positiva para negativa
+high_reversal = short_slope_neg and short_slope_pos[1]
+// Reversão da baixa: inclinação da curta muda de negativa para positiva
+low_reversal = short_slope_pos and short_slope_neg[1]
+
+// --- Trend and Trading Signals ---
+// Tendencia de alta: alerta de alta e fechamento acima da longa
+bullish_trend = is_bullish_alert and close > long_ma
+// Tendencia de baixa: alerta de baixa e fechamento abaixo da longa
+bearish_trend = is_bearish_alert and close < long_ma
+
+// Compra: Alerta de alta e fechamento acima da longa
+buy_signal = bullish_trend and not bullish_trend[1]
+// Venda: Alerta de baixa e fechamento abaixo da longa
+sell_signal = bearish_trend and not bearish_trend[1]
+
+// Fecha operação de compra: alerta de alta e fechamento abaixo da longa
+close_buy = is_bullish_alert and close < long_ma
+// Fecha operação de venda: alerta de baixa e fechamento acima da longa
+close_sell = is_bearish_alert and close > long_ma
+
+// --- Melhora no Cálculo da Inclinação (Engenharia) ---
+// Usamos Inclinação de Regressão Linear (Derivada da reta de melhor ajuste)
+// Normalizamos pela volatilidade (ATR) para tornar o threshold universal entre ativos
+atr = ta.atr(14)
+short_slope_raw = ta.linreg(short_ma, slope_period, 0) - ta.linreg(short_ma, slope_period, 1)
+long_slope_raw = ta.linreg(long_ma, slope_period, 0) - ta.linreg(long_ma, slope_period, 1)
+
+// Inclinação Normalizada (Unidades de ATR por barra)
+short_slope_norm = short_slope_raw / atr
+long_slope_norm = long_slope_raw / atr
+
+// Mercado é considerado lateral se ambas as médias estiverem "horizontais" (dentro do threshold em ATRs)
+is_lateral = math.abs(short_slope_norm) < slope_threshold and math.abs(long_slope_norm) < slope_threshold
+
+// Lateral / Não opera: Mesma condição de fechar operação + filtro de consolidação
+is_neutral = (is_bullish_alert and close < long_ma) or (is_bearish_alert and close > long_ma) or is_lateral
+
+// Sinais de Estratégia
+if buy_signal and not is_lateral
+    strategy.entry("Long", strategy.long)
+
+if sell_signal and not is_lateral
+    strategy.entry("Short", strategy.short)
+
+if close_buy
+    strategy.close("Long", comment="Exit Long")
+
+if close_sell
+    strategy.close("Short", comment="Exit Short")
+
+if is_lateral
+    strategy.close_all(comment="Lateral - Fechando Tudo")
+
+// --- Visual Plotting ---
+plot(short_ma, color=color.blue, linewidth=2, title="Short SMA")
+plot(long_ma, color=color.orange, linewidth=2, title="Long SMA")
+
+// Plot background colors for trends and consolidation
+bgcolor(is_lateral ? color.new(color.yellow, 80) : bullish_trend ? color.new(color.green, 90) : bearish_trend ? color.new(color.red, 90) : is_neutral ? color.new(color.gray, 90) : na)
+
+// Plot shapes for signals
+plotshape(buy_signal, title="Compra", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text="COMPRA")
+plotshape(sell_signal, title="Venda", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="VENDA")
+
+// Plot shapes for closures
+plotshape(close_buy and not close_buy[1], title="Fechar Compra", style=shape.labeldown, location=location.abovebar, color=color.orange, size=size.tiny, text="FECHAR C", textcolor=color.white)
+plotshape(close_sell and not close_sell[1], title="Fechar Venda", style=shape.labelup, location=location.belowbar, color=color.orange, size=size.tiny, text="FECHAR V", textcolor=color.white)
+
+// Plot reversal markers
+plotchar(high_reversal, title="Reversão Alta", char='▼', location=location.abovebar, color=color.yellow, size=size.tiny)
+plotchar(low_reversal, title="Reversão Baixa", char='▲', location=location.belowbar, color=color.yellow, size=size.tiny)
