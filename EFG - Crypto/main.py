@@ -14,6 +14,27 @@ def load_assets(filepath):
             if clean and not clean.startswith('#'): symbols.append(clean)
     return symbols
 
+def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
+    """Função centralizada para imprimir a tabela de ativos e o resumo."""
+    if not table_data:
+        print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
+        return
+
+    print("\n" + "="*110)
+    print(f" {title} ")
+    print("="*110)
+    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<12} | {'LEV':<6} | {'VALOR (USDT)':<15} | {'IDADE':<10}"
+    print(header)
+    print("-" * 110)
+
+    for row in table_data:
+        print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<12} | {row['lev']:<6} | {row['qty']:<15} | {row['idade']:<10}")
+
+    print("-" * 110)
+    print(f"RESUMO: Saldo US${portfolio.balance:.2f} | Margem Ocupada: US${portfolio.get_current_total_margin():.2f} / US${portfolio.balance * 0.25:.2f} (25%)")
+    print(f"ALAVANCAGEM TOTAL CARTEIRA: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
+    print("="*110 + "\n")
+
 def main():
     print("\n" + "="*35)
     print("      EFG - CRYPTO MONITOR V14.1      ")
@@ -28,12 +49,11 @@ def main():
     provider = DataProvider()
     calc = MPRMCalculator()
 
-    table_data = []
+    initial_table = []
     print(f"\nAnalisando {len(symbols)} ativos. Aguarde...")
 
-    # Rastreio de margem virtual RIGOROSO para o ranking
-    current_used_margin = portfolio.get_current_total_margin()
-    virtual_margin_pool = current_used_margin
+    # Rastreio de margem virtual para o ranking
+    virtual_margin_pool = portfolio.get_current_total_margin()
 
     for symbol in symbols:
         try:
@@ -51,9 +71,7 @@ def main():
             last = df.iloc[-1]
             strength = last['p_bull'] if last['regime'] == 0 else last['p_bear']
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
-
-            regime_names = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}
-            regime_str = regime_names.get(last['regime'], "???")
+            regime_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last['regime'], "???")
 
             if active_pos:
                 if decision.get('exit_total'): acao, grupo = "FECHAR", 2
@@ -61,70 +79,66 @@ def main():
                 elif decision.get('exit_30_stretch'): acao, grupo = "REDUZIR 30%", 2
                 else: acao, grupo = "MANTER", 1
 
-                table_data.append({
+                initial_table.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
                     'lev': f"{int(active_pos['leverage'])}x", 'qty': f"{active_pos['notional_usdt']:.1f} USDT",
                     'idade': f"{active_pos.get('bars_held', 0)} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
                 })
             elif decision['signal_status'] != "EXPIRED" and side != "NONE":
-                table_data.append({
-                    'rank': f"{strength*100:4.1f}%",
-                    'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
-                    'idade': decision['signal_status'], 'grupo': 3, 'strength': strength, 'price': last['close']
-                })
+                lev = portfolio.calculate_suggested_leverage(strength)
+                margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
+
+                # SÓ MOSTRA SE HOUVER MARGEM DISPONÍVEL
+                if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
+                    initial_table.append({
+                        'rank': f"{strength*100:4.1f}%",
+                        'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
+                        'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
+                        'idade': decision['signal_status'], 'grupo': 3, 'strength': strength, 'price': last['close']
+                    })
+                    virtual_margin_pool += margin_needed
         except Exception: continue
 
-    table_data.sort(key=lambda x: (x['grupo'], -x['strength']))
+    # Ordenar por Grupo e Strength
+    initial_table.sort(key=lambda x: (x['grupo'], -x['strength']))
 
-    print("\n" + "="*110)
-    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<12} | {'LEV':<6} | {'VALOR (USDT)':<15} | {'IDADE':<10}"
-    print(header)
-    print("-" * 110)
-
-    final_actions = []
-    for row in table_data:
-        if row['acao'] == "ENTRAR":
-            lev = portfolio.calculate_suggested_leverage(row['strength'])
-            margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
-
-            # Trava de Segurança: Verifica se cabe na margem de 25%
-            if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
-                row['lev'], row['qty'] = f"{lev}x", f"{margin_needed * lev:.1f} USDT"
-                virtual_margin_pool += margin_needed
-            else:
-                row['acao'], row['lev'], row['qty'] = "LIMITE OFF", "---", "---"
-
-        print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<12} | {row['lev']:<6} | {row['qty']:<15} | {row['idade']:<10}")
-        final_actions.append(row)
-
-    print("-" * 110)
-    print(f"RESUMO: Saldo US${portfolio.balance:.2f} | Margem Ocupada: US${portfolio.get_current_total_margin():.2f} / US${portfolio.balance * 0.25:.2f} (25%)")
-    print(f"ALAVANCAGEM TOTAL CARTEIRA: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
-    print("="*110 + "\n")
+    # Exibição da Tabela Filtrada (Apenas o que importa)
+    print_status_table(initial_table, portfolio, "ACOMPANHAMENTO E OPORTUNIDADES")
 
     if is_official:
-        # Aumenta a idade das posições existentes
+        # Só incrementamos a idade na rodada oficial
         portfolio.increment_bars_held()
 
         print("--- ATUALIZAÇÃO DO PORTFOLIO ---")
-        for row in final_actions:
+        for row in initial_table:
             if row['acao'] == "ENTRAR":
-                # Só pergunta se ainda houver margem REAL disponível
                 if portfolio.can_open_new():
                     if input(f"Confirmar entrada em {row['ticker']} ({row['dir']})? (s/n): ").lower() == 's':
-                        s = float(row['rank'].replace('%', ''))/100
-                        l = int(row['lev'].replace('x', ''))
-                        portfolio.open_position(row['ticker'], row['dir'], row['price'], s, l)
+                        portfolio.open_position(row['ticker'], row['dir'], row['price'], float(row['rank'].replace('%',''))/100, int(row['lev'].replace('x','')))
             elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR"]:
                 if input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ").lower() == 's':
                     if row['acao'] == "FECHAR":
-                        res = input("Lucro/Prejuízo (USD)? (ex: 5.50): ")
+                        res = input("Lucro/Prejuízo (USD)?: ")
                         portfolio.update_balance(float(res))
                         portfolio.close_position(row['ticker'])
                     elif "50%" in row['acao']: portfolio.reduce_position(row['ticker'], 50)
                     elif "30%" in row['acao']: portfolio.reduce_position(row['ticker'], 30)
+
+        # REPUBLICAR TABELA FINAL (SOMENTE ATIVOS QUE FICARAM EM CARTEIRA)
         print("\n✅ Portfolio atualizado.")
+        # Recarregar para garantir que pegamos os dados salvos
+        portfolio = PortfolioManager()
+        final_list = []
+        for ticker, pos in portfolio.positions.items():
+            # Simplificação: assume regime estável para a republicação rápida
+            final_list.append({
+                'rank': f"{pos.get('markov_strength', 0)*100:4.1f}%",
+                'ticker': ticker, 'regime': "---", 'dir': pos['side'], 'acao': "MANTER",
+                'lev': f"{int(pos['leverage'])}x", 'qty': f"{pos['notional_usdt']:.1f} USDT",
+                'idade': f"{pos.get('bars_held', 0)} cnd"
+            })
+        print_status_table(final_list, portfolio, "CARTEIRA ATUALIZADA (OFICIAL)")
 
 if __name__ == "__main__":
     main()
