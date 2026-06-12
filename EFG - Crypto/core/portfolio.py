@@ -5,7 +5,8 @@ class PortfolioManager:
     """
     Gerencia o estado das posições e as regras de risco.
     - Saldo Dinâmico
-    - Margem Total Máxima: 20%
+    - Margem Total Máxima: 25% ($50.00 para saldo de $200.00)
+    - Margem/Ativo: 2% ($4.00 para saldo de $200.00)
     - Alavancagem Inteira (1x a 15x)
     """
 
@@ -14,12 +15,12 @@ class PortfolioManager:
         self.default_balance = default_balance
         self.data = self._load()
 
-        # Garante que os campos existem
+        # Inicializa se o arquivo for novo
         if 'balance' not in self.data: self.data['balance'] = default_balance
         if 'positions' not in self.data: self.data['positions'] = {}
 
-        self.margin_per_asset_pct = 0.02 # 2% ($4.00)
-        self.max_total_margin_pct = 0.20 # 20% ($40.00)
+        self.margin_per_asset_pct = 0.02
+        self.max_total_margin_pct = 0.25 # Ajustado para 25% conforme solicitado
         self.max_leverage_per_asset = 15
         self.max_total_leverage = 5.0
 
@@ -28,11 +29,10 @@ class PortfolioManager:
             try:
                 with open(self.filename, 'r') as f:
                     content = json.load(f)
-                    if isinstance(content, dict):
-                        return content
+                    return content if isinstance(content, dict) else {}
             except Exception:
                 pass
-        return {'balance': self.default_balance, 'positions': {}}
+        return {}
 
     def save(self):
         with open(self.filename, 'w') as f:
@@ -40,40 +40,36 @@ class PortfolioManager:
 
     @property
     def balance(self):
-        return self.data.get('balance', self.default_balance)
+        return float(self.data.get('balance', self.default_balance))
 
     @property
     def positions(self):
         return self.data.get('positions', {})
 
     def get_current_total_margin(self):
-        return sum(p.get('margin_usd', 0) for p in self.positions.values())
+        """Soma da margem usada em todas as posições no JSON."""
+        return sum(float(p.get('margin_usd', 0)) for p in self.positions.values())
 
     def get_current_total_notional(self):
-        return sum(p.get('notional_usdt', 0) for p in self.positions.values())
+        """Soma do valor nominal (USDT) de todas as posições."""
+        return sum(float(p.get('notional_usdt', 0)) for p in self.positions.values())
 
     def get_current_total_leverage(self):
-        if self.balance <= 0: return 0.0
-        return self.get_current_total_notional() / self.balance
+        """Alavancagem real da carteira (Notional / Saldo)."""
+        b = self.balance
+        return self.get_current_total_notional() / b if b > 0 else 0.0
 
     def calculate_suggested_leverage(self, markov_strength):
-        """Calcula alavancagem inteira (1-15x) baseada na força."""
+        """Calcula alavancagem inteira (1-15x) para maximizar lucro."""
         suggested = int(round(markov_strength * 30.0))
         return min(self.max_leverage_per_asset, max(1, suggested))
 
-    def update_balance(self, profit_loss):
-        self.data['balance'] += profit_loss
-        self.save()
-
-    def can_open_new(self):
-        """Verifica se ainda há espaço na margem total (20%)."""
+    def can_open_new(self, margin_needed):
+        """Verifica se a nova posição cabe nos 25% de margem total."""
         limit = self.balance * self.max_total_margin_pct
-        return self.get_current_total_margin() + (self.balance * self.margin_per_asset_pct) <= limit
+        return (self.get_current_total_margin() + margin_needed) <= limit
 
     def open_position(self, symbol, side, price, strength, leverage):
-        if not self.can_open_new():
-            return False
-
         margin = self.balance * self.margin_per_asset_pct
         notional = margin * leverage
 
@@ -86,7 +82,10 @@ class PortfolioManager:
             'markov_strength': float(strength)
         }
         self.save()
-        return True
+
+    def update_balance(self, profit_loss):
+        self.data['balance'] = self.balance + profit_loss
+        self.save()
 
     def close_position(self, symbol):
         if symbol in self.data['positions']:

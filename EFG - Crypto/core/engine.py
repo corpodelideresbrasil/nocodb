@@ -11,8 +11,11 @@ class MPRMEngine:
         self.sl_mult = sl_mult
         self.active_position = active_position
 
+    def _ema(self, series, length):
+        return series.ewm(span=length, adjust=False).mean()
+
     def _atr(self, df, length=14):
-        """Cálculo nativo do ATR."""
+        """Cálculo nativo do ATR (Wilder's)."""
         high_low = df['high'] - df['low']
         high_close = np.abs(df['high'] - df['close'].shift())
         low_close = np.abs(df['low'] - df['close'].shift())
@@ -38,7 +41,7 @@ class MPRMEngine:
         current_trail = None
         flat_counter = 0
 
-        # Histórico curto para estabilizar o trail
+        # Analisamos os últimos candles para estabilizar o trail
         start_idx = max(0, len(df) - 50)
 
         for i in range(start_idx, len(df)):
@@ -75,19 +78,28 @@ class MPRMEngine:
             'atr': last['atr_sl']
         }
 
+        # 4. Lógica de Saída (Se houver posição ativa)
         if self.active_position:
             price = last['close']
             atr = last['atr_sl']
             trail = last['trail_stop']
 
+            # Saída por Regime (Manual: 2 ou 3)
             decision['exit_total'] = last['regime'] in [2, 3]
 
+            # Saída por Stop
             if self.active_position['side'] == 'LONG' and trail and price < trail:
                 decision['exit_total'] = True
             elif self.active_position['side'] == 'SHORT' and trail and price > trail:
                 decision['exit_total'] = True
 
-            decision['exit_50_flat'] = last['flat_count'] >= 3
-            decision['exit_30_stretch'] = trail and abs(price - trail) > atr
+            # FILTRO DE TENDÊNCIA LONGO PRAZO: Só sugere redução após 10 candles de posição
+            # Isso evita saídas prematuras por ruído de mercado logo após a entrada
+            if last['regime_age'] >= 10:
+                decision['exit_50_flat'] = last['flat_count'] >= 3
+                decision['exit_30_stretch'] = trail and abs(price - trail) > atr
+            else:
+                decision['exit_50_flat'] = False
+                decision['exit_30_stretch'] = False
 
         return decision
