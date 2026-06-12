@@ -56,7 +56,8 @@ def main():
 
     for symbol in symbols:
         try:
-            df = provider.fetch_ohlcv(symbol)
+            # Busca histórico maior para estabilização
+            df = provider.fetch_ohlcv(symbol, limit=250)
             if df is None or df.empty: continue
 
             df = calc.calculate_physics(df)
@@ -72,7 +73,7 @@ def main():
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
             regime_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last['regime'], "???")
 
-            # --- CASO 1: POSIÇÃO JÁ ATIVA (Sempre mostrar) ---
+            # --- POSIÇÃO JÁ ATIVA ---
             if active_pos:
                 if decision.get('exit_total'): acao, grupo = "FECHAR", 2
                 elif decision.get('exit_50_flat'): acao, grupo = "REDUZIR 50%", 2
@@ -86,16 +87,13 @@ def main():
                     'idade': f"{active_pos.get('bars_held', 0)} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
                 })
 
-            # --- CASO 2: NOVA OPORTUNIDADE (Filtro Rígido) ---
+            # --- NOVA OPORTUNIDADE (Filtro Rígido V14.1) ---
             elif decision['signal_status'] != "EXPIRED" and side != "NONE":
-                # REGRAS DO MANUAL:
-                # 1. Markov Strength >= 40% (0.4)
-                # 2. State != EXHAUSTION
+                # REGRAS RÍGIDAS: Strength >= 40% e não Exaustão
                 if strength >= 0.4 and last['dynamic_state'] != "EXHAUSTION":
                     lev = portfolio.calculate_suggested_leverage(strength)
                     margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
 
-                    # Checa se cabe na margem de 25%
                     if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
                         initial_table.append({
                             'rank': f"{strength*100:4.1f}%",
@@ -106,10 +104,7 @@ def main():
                         virtual_margin_pool += margin_needed
         except Exception: continue
 
-    # Ordenar por Grupo e Strength
     initial_table.sort(key=lambda x: (x['grupo'], -x['strength']))
-
-    # Exibição da Tabela Filtrada
     print_status_table(initial_table, portfolio, "ACOMPANHAMENTO E OPORTUNIDADES FILTRADAS")
 
     if is_official:
@@ -123,13 +118,12 @@ def main():
             elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR"]:
                 if input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ").lower() == 's':
                     if row['acao'] == "FECHAR":
-                        res = input("Lucro/Prejuízo (USD)?: ")
-                        portfolio.update_balance(float(res))
+                        res_str = input("Lucro/Prejuízo (USD)?: ").replace(',', '.')
+                        portfolio.update_balance(float(res_str))
                         portfolio.close_position(row['ticker'])
                     elif "50%" in row['acao']: portfolio.reduce_position(row['ticker'], 50)
                     elif "30%" in row['acao']: portfolio.reduce_position(row['ticker'], 30)
 
-        # REPUBLICAR TABELA FINAL (SOMENTE ATIVOS EM CARTEIRA)
         print("\n✅ Portfolio atualizado.")
         portfolio = PortfolioManager()
         final_table = []
