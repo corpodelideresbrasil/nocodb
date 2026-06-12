@@ -16,8 +16,12 @@ class PortfolioManager:
 
     def _load(self):
         if os.path.exists(self.filename):
-            with open(self.filename, 'r') as f:
-                return json.load(f)
+            try:
+                with open(self.filename, 'r') as f:
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
         return {}
 
     def save(self):
@@ -26,14 +30,12 @@ class PortfolioManager:
 
     def get_total_notional(self):
         """Calcula o valor nocional total ocupado (Margem * Alavancagem)."""
-        # Como cada posição usa 2% do saldo com alavancagem de 5x
-        # O nocional de cada ativo é 10% do saldo total (0.02 * 5 = 0.1)
-        total_margin = sum(p['margin_usd'] for p in self.positions.values())
+        total_margin = sum(p.get('margin_usd', 0) for p in self.positions.values())
         return total_margin * self.max_total_leverage
 
     def get_current_leverage(self):
         """Calcula a alavancagem atual da carteira."""
-        if self.balance <= 0: return 0
+        if self.balance <= 0: return 0.0
         return self.get_total_notional() / self.balance
 
     def can_open_new(self):
@@ -42,7 +44,6 @@ class PortfolioManager:
 
     def open(self, symbol, side, price, strength):
         if not self.can_open_new(): return False
-
         self.positions[symbol] = {
             'side': side,
             'entry_price': price,
