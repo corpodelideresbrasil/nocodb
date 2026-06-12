@@ -33,7 +33,18 @@ Para um ativo receber a recomendação `ENTRAR`, ele deve satisfazer:
 3.  **Ranqueamento:** O ativo deve ter força de Markov suficiente para estar entre os top-ranked.
 4.  **Limite de Margem:** Deve haver espaço no orçamento de 20% da margem total da carteira ($40.00 para um saldo de $200.00). Caso o limite seja atingido, ativos com sinais válidos mas menor prioridade serão marcados como `LIMITE OFF`.
 
-## 4. Gestão de Risco Automatizada
+## 4. Mapeamento Físico do Modelo (Termodinâmica)
+
+Para os perfis de engenharia, o programa traduz as grandezas de mercado nas seguintes analogias físicas:
+
+*   **Velocidade (`body_work`):** O deslocamento líquido do preço no candle. Representa o trabalho útil realizado pela força dominante.
+*   **Energia Cinética (`f_bull`, `f_bear`):** A energia em movimento que impulsiona o preço em uma direção.
+*   **Energia Potencial / Compressão (`f_comp`):** Quando a volatilidade (`range`) é menor que a média (`ATR`), a "mola" do mercado está comprimindo, acumulando energia para a próxima explosão.
+*   **Entropia / Atrito (`f_exh`):** Representada pelos pavios excessivos. Indica caos e perda de eficiência no movimento (Exaustão).
+*   **Inércia (`markov_len`):** A suavização de Markov define a resistência do sistema a mudar de regime. Uma inércia maior exige mais "energia nova" para alterar o estado de Bull para Bear, por exemplo.
+*   **Momento e Impulso (`Inertial Trail`):** O trailing stop funciona como um vetor que segue o movimento. Se ele fica "Flat", indica perda de impulso. Se o preço se afasta demais (> 1 ATR), indica um sistema sobrecarregado (esticado).
+
+## 5. Gestão de Risco Automatizada
 
 O módulo `Engine` inclui a verificação de viabilidade operacional:
 *   **Custo Transacional:** O programa calcula se `Spread + Slippage` excede **20% do ATR**. Caso exceda, o sinal é marcado como "Inviável" no console.

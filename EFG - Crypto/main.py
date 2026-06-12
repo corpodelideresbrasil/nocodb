@@ -20,20 +20,20 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    print("\n" + "="*110)
+    print("\n" + "="*125)
     print(f" {title} ")
-    print("="*110)
-    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<12} | {'LEV':<6} | {'VALOR (USDT)':<15} | {'IDADE':<10}"
+    print("="*125)
+    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<12} | {'STOP LOSS':<12} | {'LEV':<4} | {'VALOR (USDT)':<12}"
     print(header)
-    print("-" * 110)
+    print("-" * 125)
 
     for row in table_data:
-        print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<12} | {row['lev']:<6} | {row['qty']:<15} | {row['idade']:<10}")
+        print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<12} | {row['stop']:<12} | {row['lev']:<4} | {row['qty']:<12}")
 
-    print("-" * 110)
+    print("-" * 125)
     print(f"RESUMO: Saldo US${portfolio.balance:.2f} | Margem Ocupada: US${portfolio.get_current_total_margin():.2f} / US${portfolio.balance * 0.25:.2f} (25%)")
     print(f"ALAVANCAGEM TOTAL CARTEIRA: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
-    print("="*110 + "\n")
+    print("="*125 + "\n")
 
 def main():
     print("\n" + "="*35)
@@ -56,8 +56,8 @@ def main():
 
     for symbol in symbols:
         try:
-            # Busca histórico maior para estabilização
-            df = provider.fetch_ohlcv(symbol, limit=250)
+            # Lookback reduzido para 100 candles (suficiente para convergência de Markov 20)
+            df = provider.fetch_ohlcv(symbol, limit=100)
             if df is None or df.empty: continue
 
             df = calc.calculate_physics(df)
@@ -73,7 +73,9 @@ def main():
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
             regime_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last['regime'], "???")
 
-            # --- POSIÇÃO JÁ ATIVA ---
+            stop_val = decision.get('trail_stop')
+            stop_str = f"{stop_val:.4f}" if stop_val and not np.isnan(stop_val) else "---"
+
             if active_pos:
                 if decision.get('exit_total'): acao, grupo = "FECHAR", 2
                 elif decision.get('exit_50_flat'): acao, grupo = "REDUZIR 50%", 2
@@ -83,13 +85,11 @@ def main():
                 initial_table.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
-                    'lev': f"{int(active_pos['leverage'])}x", 'qty': f"{active_pos['notional_usdt']:.1f} USDT",
-                    'idade': f"{active_pos.get('bars_held', 0)} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
+                    'stop': stop_str, 'lev': f"{int(active_pos['leverage'])}x",
+                    'qty': f"{active_pos['notional_usdt']:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
+                    'grupo': grupo, 'strength': 1.1, 'price': last['close']
                 })
-
-            # --- NOVA OPORTUNIDADE (Filtro Rígido V14.1) ---
-            elif decision['signal_status'] != "EXPIRED" and side != "NONE":
-                # REGRAS RÍGIDAS: Strength >= 40% e não Exaustão
+            elif decision['ignition_long'] or decision['ignition_short']:
                 if strength >= 0.4 and last['dynamic_state'] != "EXHAUSTION":
                     lev = portfolio.calculate_suggested_leverage(strength)
                     margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
@@ -98,8 +98,8 @@ def main():
                         initial_table.append({
                             'rank': f"{strength*100:4.1f}%",
                             'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
-                            'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
-                            'idade': decision['signal_status'], 'grupo': 3, 'strength': strength, 'price': last['close']
+                            'stop': stop_str, 'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
+                            'idade': "FRESH", 'grupo': 3, 'strength': strength, 'price': last['close']
                         })
                         virtual_margin_pool += margin_needed
         except Exception: continue
@@ -126,15 +126,14 @@ def main():
 
         print("\n✅ Portfolio atualizado.")
         portfolio = PortfolioManager()
-        final_table = []
+        final_list = []
         for ticker, pos in portfolio.positions.items():
-            final_table.append({
+            final_list.append({
                 'rank': f"{pos.get('markov_strength', 0)*100:4.1f}%",
                 'ticker': ticker, 'regime': "---", 'dir': pos['side'], 'acao': "MANTER",
-                'lev': f"{int(pos['leverage'])}x", 'qty': f"{pos['notional_usdt']:.1f} USDT",
-                'idade': f"{pos.get('bars_held', 0)} cnd"
+                'stop': "---", 'lev': f"{int(pos['leverage'])}x", 'qty': f"{pos['notional_usdt']:.1f} USDT"
             })
-        print_status_table(final_table, portfolio, "CARTEIRA ATUALIZADA (SITUAÇÃO ATUAL)")
+        print_status_table(final_list, portfolio, "CARTEIRA ATUALIZADA (SITUAÇÃO ATUAL)")
 
 if __name__ == "__main__":
     main()
