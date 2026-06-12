@@ -15,12 +15,11 @@ class PortfolioManager:
         self.default_balance = default_balance
         self.data = self._load()
 
-        # Inicializa se o arquivo for novo
         if 'balance' not in self.data: self.data['balance'] = default_balance
         if 'positions' not in self.data: self.data['positions'] = {}
 
         self.margin_per_asset_pct = 0.02
-        self.max_total_margin_pct = 0.25 # Ajustado para 25% conforme solicitado
+        self.max_total_margin_pct = 0.25
         self.max_leverage_per_asset = 15
         self.max_total_leverage = 5.0
 
@@ -47,29 +46,30 @@ class PortfolioManager:
         return self.data.get('positions', {})
 
     def get_current_total_margin(self):
-        """Soma da margem usada em todas as posições no JSON."""
         return sum(float(p.get('margin_usd', 0)) for p in self.positions.values())
 
     def get_current_total_notional(self):
-        """Soma do valor nominal (USDT) de todas as posições."""
+        # Garante o uso de 'notional_usdt' que é o valor real da operação
         return sum(float(p.get('notional_usdt', 0)) for p in self.positions.values())
 
     def get_current_total_leverage(self):
-        """Alavancagem real da carteira (Notional / Saldo)."""
         b = self.balance
         return self.get_current_total_notional() / b if b > 0 else 0.0
 
     def calculate_suggested_leverage(self, markov_strength):
-        """Calcula alavancagem inteira (1-15x) para maximizar lucro."""
         suggested = int(round(markov_strength * 30.0))
         return min(self.max_leverage_per_asset, max(1, suggested))
 
-    def can_open_new(self, margin_needed):
-        """Verifica se a nova posição cabe nos 25% de margem total."""
-        limit = self.balance * self.max_total_margin_pct
-        return (self.get_current_total_margin() + margin_needed) <= limit
+    def can_open_new(self):
+        """Verifica limites de margem (25%) e alavancagem total (5x)."""
+        margin_ok = self.get_current_total_margin() + (self.balance * self.margin_per_asset_pct) <= (self.balance * self.max_total_margin_pct)
+        leverage_ok = self.get_current_total_leverage() < self.max_total_leverage
+        return margin_ok and leverage_ok
 
     def open_position(self, symbol, side, price, strength, leverage):
+        if not self.can_open_new():
+            return False
+
         margin = self.balance * self.margin_per_asset_pct
         notional = margin * leverage
 
@@ -79,8 +79,16 @@ class PortfolioManager:
             'margin_usd': float(margin),
             'leverage': int(leverage),
             'notional_usdt': float(notional),
-            'markov_strength': float(strength)
+            'markov_strength': float(strength),
+            'bars_held': 0 # Inicia contador de candles
         }
+        self.save()
+        return True
+
+    def increment_bars_held(self):
+        """Aumenta o contador de tempo de todas as posições (chamado na rodada oficial)."""
+        for symbol in self.data['positions']:
+            self.data['positions'][symbol]['bars_held'] = self.data['positions'][symbol].get('bars_held', 0) + 1
         self.save()
 
     def update_balance(self, profit_loss):

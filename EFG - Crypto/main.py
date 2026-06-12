@@ -29,10 +29,11 @@ def main():
     calc = MPRMCalculator()
 
     table_data = []
-    print(f"\nProcessando {len(symbols)} ativos. Por favor, aguarde...")
+    print(f"\nAnalisando {len(symbols)} ativos. Aguarde...")
 
-    # Rastreio de margem virtual para o ranking
-    virtual_margin_used = portfolio.get_current_total_margin()
+    # Rastreio de margem virtual RIGOROSO para o ranking
+    current_used_margin = portfolio.get_current_total_margin()
+    virtual_margin_pool = current_used_margin
 
     for symbol in symbols:
         try:
@@ -64,7 +65,7 @@ def main():
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
                     'lev': f"{int(active_pos['leverage'])}x", 'qty': f"{active_pos['notional_usdt']:.1f} USDT",
-                    'idade': f"{decision['regime_age']} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
+                    'idade': f"{active_pos.get('bars_held', 0)} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
                 })
             elif decision['signal_status'] != "EXPIRED" and side != "NONE":
                 table_data.append({
@@ -81,16 +82,21 @@ def main():
     print(header)
     print("-" * 110)
 
+    final_actions = []
     for row in table_data:
         if row['acao'] == "ENTRAR":
             lev = portfolio.calculate_suggested_leverage(row['strength'])
-            margin = portfolio.balance * portfolio.margin_per_asset_pct
-            if virtual_margin_used + margin <= (portfolio.balance * portfolio.max_total_margin_pct):
-                row['lev'], row['qty'] = f"{lev}x", f"{margin * lev:.1f} USDT"
-                virtual_margin_used += margin
+            margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
+
+            # Trava de Segurança: Verifica se cabe na margem de 25%
+            if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
+                row['lev'], row['qty'] = f"{lev}x", f"{margin_needed * lev:.1f} USDT"
+                virtual_margin_pool += margin_needed
             else:
                 row['acao'], row['lev'], row['qty'] = "LIMITE OFF", "---", "---"
+
         print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<12} | {row['lev']:<6} | {row['qty']:<15} | {row['idade']:<10}")
+        final_actions.append(row)
 
     print("-" * 110)
     print(f"RESUMO: Saldo US${portfolio.balance:.2f} | Margem Ocupada: US${portfolio.get_current_total_margin():.2f} / US${portfolio.balance * 0.25:.2f} (25%)")
@@ -98,12 +104,18 @@ def main():
     print("="*110 + "\n")
 
     if is_official:
-        for row in table_data:
+        # Aumenta a idade das posições existentes
+        portfolio.increment_bars_held()
+
+        print("--- ATUALIZAÇÃO DO PORTFOLIO ---")
+        for row in final_actions:
             if row['acao'] == "ENTRAR":
-                if input(f"Confirmar entrada em {row['ticker']} ({row['dir']})? (s/n): ").lower() == 's':
-                    s = float(row['rank'].replace('%', ''))/100
-                    l = int(row['lev'].replace('x', ''))
-                    portfolio.open_position(row['ticker'], row['dir'], row['price'], s, l)
+                # Só pergunta se ainda houver margem REAL disponível
+                if portfolio.can_open_new():
+                    if input(f"Confirmar entrada em {row['ticker']} ({row['dir']})? (s/n): ").lower() == 's':
+                        s = float(row['rank'].replace('%', ''))/100
+                        l = int(row['lev'].replace('x', ''))
+                        portfolio.open_position(row['ticker'], row['dir'], row['price'], s, l)
             elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR"]:
                 if input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ").lower() == 's':
                     if row['acao'] == "FECHAR":
