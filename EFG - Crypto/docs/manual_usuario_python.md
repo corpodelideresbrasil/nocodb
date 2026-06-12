@@ -36,7 +36,7 @@ O módulo `Engine` inclui a verificação de viabilidade operacional:
     ```
 2.  Para monitorar os ativos, edite a lista no arquivo `main.py` e execute:
     ```bash
-    python main.py
+    python3 main.py
     ```
 
 ## 5. Saídas Parciais e Trailing Stop
