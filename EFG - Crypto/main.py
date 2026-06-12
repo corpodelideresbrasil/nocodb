@@ -5,13 +5,20 @@ from core.calculator import MPRMCalculator
 from core.engine import MPRMEngine
 
 def load_assets(filepath):
-    """Lê a lista de ativos de um arquivo txt."""
+    """Lê a lista de ativos de um arquivo txt, removendo caracteres indesejados."""
     if not os.path.exists(filepath):
         return []
+    symbols = []
     with open(filepath, 'r') as f:
-        lines = f.readlines()
-    # Remove comentários e linhas vazias
-    return [line.strip() for line in lines if line.strip() and not line.startswith('#')]
+        for line in f:
+            clean_line = line.strip()
+            if not clean_line or clean_line.startswith('#'):
+                continue
+            # Remove vírgulas, aspas e outros caracteres comuns em listas copiadas
+            clean_symbol = clean_line.replace(',', '').replace("'", "").replace('"', '').strip()
+            if clean_symbol:
+                symbols.append(clean_symbol)
+    return symbols
 
 def monitor_market():
     assets_file = "assets.txt"
@@ -30,6 +37,10 @@ def monitor_market():
         try:
             # 1. Coleta de dados
             df = provider.fetch_ohlcv(symbol)
+
+            if df is None or df.empty:
+                print(f"Pulando {symbol}: Sem dados disponíveis.")
+                continue
 
             # 2. Cálculos matemáticos
             df = calc.calculate_physics(df)
