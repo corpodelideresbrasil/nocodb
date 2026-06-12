@@ -52,7 +52,6 @@ def main():
     initial_table = []
     print(f"\nAnalisando {len(symbols)} ativos. Aguarde...")
 
-    # Rastreio de margem virtual para o ranking
     virtual_margin_pool = portfolio.get_current_total_margin()
 
     for symbol in symbols:
@@ -73,6 +72,7 @@ def main():
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
             regime_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last['regime'], "???")
 
+            # --- CASO 1: POSIÇÃO JÁ ATIVA (Sempre mostrar) ---
             if active_pos:
                 if decision.get('exit_total'): acao, grupo = "FECHAR", 2
                 elif decision.get('exit_50_flat'): acao, grupo = "REDUZIR 50%", 2
@@ -85,31 +85,35 @@ def main():
                     'lev': f"{int(active_pos['leverage'])}x", 'qty': f"{active_pos['notional_usdt']:.1f} USDT",
                     'idade': f"{active_pos.get('bars_held', 0)} cnd", 'grupo': grupo, 'strength': 1.1, 'price': last['close']
                 })
-            elif decision['signal_status'] != "EXPIRED" and side != "NONE":
-                lev = portfolio.calculate_suggested_leverage(strength)
-                margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
 
-                # SÓ MOSTRA SE HOUVER MARGEM DISPONÍVEL
-                if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
-                    initial_table.append({
-                        'rank': f"{strength*100:4.1f}%",
-                        'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
-                        'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
-                        'idade': decision['signal_status'], 'grupo': 3, 'strength': strength, 'price': last['close']
-                    })
-                    virtual_margin_pool += margin_needed
+            # --- CASO 2: NOVA OPORTUNIDADE (Filtro Rígido) ---
+            elif decision['signal_status'] != "EXPIRED" and side != "NONE":
+                # REGRAS DO MANUAL:
+                # 1. Markov Strength >= 40% (0.4)
+                # 2. State != EXHAUSTION
+                if strength >= 0.4 and last['dynamic_state'] != "EXHAUSTION":
+                    lev = portfolio.calculate_suggested_leverage(strength)
+                    margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
+
+                    # Checa se cabe na margem de 25%
+                    if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
+                        initial_table.append({
+                            'rank': f"{strength*100:4.1f}%",
+                            'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
+                            'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
+                            'idade': decision['signal_status'], 'grupo': 3, 'strength': strength, 'price': last['close']
+                        })
+                        virtual_margin_pool += margin_needed
         except Exception: continue
 
     # Ordenar por Grupo e Strength
     initial_table.sort(key=lambda x: (x['grupo'], -x['strength']))
 
-    # Exibição da Tabela Filtrada (Apenas o que importa)
-    print_status_table(initial_table, portfolio, "ACOMPANHAMENTO E OPORTUNIDADES")
+    # Exibição da Tabela Filtrada
+    print_status_table(initial_table, portfolio, "ACOMPANHAMENTO E OPORTUNIDADES FILTRADAS")
 
     if is_official:
-        # Só incrementamos a idade na rodada oficial
         portfolio.increment_bars_held()
-
         print("--- ATUALIZAÇÃO DO PORTFOLIO ---")
         for row in initial_table:
             if row['acao'] == "ENTRAR":
@@ -125,20 +129,18 @@ def main():
                     elif "50%" in row['acao']: portfolio.reduce_position(row['ticker'], 50)
                     elif "30%" in row['acao']: portfolio.reduce_position(row['ticker'], 30)
 
-        # REPUBLICAR TABELA FINAL (SOMENTE ATIVOS QUE FICARAM EM CARTEIRA)
+        # REPUBLICAR TABELA FINAL (SOMENTE ATIVOS EM CARTEIRA)
         print("\n✅ Portfolio atualizado.")
-        # Recarregar para garantir que pegamos os dados salvos
         portfolio = PortfolioManager()
-        final_list = []
+        final_table = []
         for ticker, pos in portfolio.positions.items():
-            # Simplificação: assume regime estável para a republicação rápida
-            final_list.append({
+            final_table.append({
                 'rank': f"{pos.get('markov_strength', 0)*100:4.1f}%",
                 'ticker': ticker, 'regime': "---", 'dir': pos['side'], 'acao': "MANTER",
                 'lev': f"{int(pos['leverage'])}x", 'qty': f"{pos['notional_usdt']:.1f} USDT",
                 'idade': f"{pos.get('bars_held', 0)} cnd"
             })
-        print_status_table(final_list, portfolio, "CARTEIRA ATUALIZADA (OFICIAL)")
+        print_status_table(final_table, portfolio, "CARTEIRA ATUALIZADA (SITUAÇÃO ATUAL)")
 
 if __name__ == "__main__":
     main()
