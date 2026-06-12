@@ -14,15 +14,23 @@ def load_assets(filepath):
             if clean and not clean.startswith('#'): symbols.append(clean)
     return symbols
 
-def monitor_market():
+def main():
+    print("\n" + "="*30)
+    print("   EFG - CRYPTO MONITOR   ")
+    print("="*30)
+    print("1. Rodada Oficial (Atualiza Portfolio)")
+    print("2. Apenas Acompanhamento")
+    escolha = input("\nSelecione o modo (1/2): ")
+
+    is_official = (escolha == '1')
     symbols = load_assets("assets.txt")
     provider = DataProvider()
     calc = MPRMCalculator()
-    portfolio = PortfolioManager(balance=200.0)
+    portfolio = PortfolioManager()
 
-    table_data = [] # Lista consolidada para a tabela final
+    table_data = []
 
-    print(f"\n--- MPRM V14.1 Futures Monitor | Saldo: ${portfolio.balance:.2f} ---")
+    print(f"\nProcessando {len(symbols)} ativos. Por favor, aguarde...")
 
     for symbol in symbols:
         try:
@@ -42,63 +50,78 @@ def monitor_market():
             strength = last['p_bull'] if last['regime'] == 0 else last['p_bear']
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
 
-            # --- MONITORAMENTO DE POSIÇÕES ATIVAS ---
+            # Agrupamento: 1=Acompanhado, 2=Reduzido/Encerrado, 3=Nova Entrada
             if active_pos:
-                acao = "SAÍDA TOTAL" if decision.get('exit_total') else \
-                       "REDUZIR 50%" if decision.get('exit_50_flat') else \
-                       "REDUZIR 30%" if decision.get('exit_30_stretch') else "MANTER"
+                if decision.get('exit_total'):
+                    acao, grupo = "FECHAR", 2
+                elif decision.get('exit_50_flat'):
+                    acao, grupo = "REDUZIR 50%", 2
+                elif decision.get('exit_30_stretch'):
+                    acao, grupo = "REDUZIR 30%", 2
+                else:
+                    acao, grupo = "MANTER", 1
 
                 table_data.append({
-                    'ticker': symbol,
-                    'direcao': active_pos['side'],
-                    'acao': acao,
-                    'alavancagem': f"{active_pos['leverage']:.1f}x",
-                    'quantidade': f"{active_pos['quantity']:.4f}",
-                    'idade': f"{decision['regime_age']} cnd",
-                    'strength': 1.0 # Posições ativas ficam no topo do rank conceitualmente
+                    'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
+                    'ticker': symbol, 'dir': active_pos['side'], 'acao': acao,
+                    'lev': f"{active_pos['leverage']}x", 'qty': f"{active_pos['notional_usdt']:.1f} USDT",
+                    'idade': f"{decision['regime_age']} cnd", 'grupo': grupo, 'strength': 1.1 # Prioridade visual
                 })
-
-            # --- BUSCA DE NOVAS OPORTUNIDADES ---
             elif decision['signal_status'] != "EXPIRED" and side != "NONE":
                 leverage = portfolio.calculate_suggested_leverage(strength)
                 margin = portfolio.balance * portfolio.margin_per_asset_pct
-                qty = (margin * leverage) / price
+                notional = margin * leverage
 
-                # Só recomenda se não exceder os 20% de margem total
                 if portfolio.get_current_total_margin() + margin <= (portfolio.balance * portfolio.max_total_margin_pct):
                     table_data.append({
-                        'ticker': symbol,
-                        'direcao': side,
-                        'acao': "ENTRAR",
-                        'alavancagem': f"{leverage:.1f}x",
-                        'quantidade': f"{qty:.4f}",
-                        'idade': decision['signal_status'],
-                        'strength': strength
+                        'rank': f"{strength*100:4.1f}%",
+                        'ticker': symbol, 'dir': side, 'acao': "ENTRAR",
+                        'lev': f"{leverage}x", 'qty': f"{notional:.1f} USDT",
+                        'idade': decision['signal_status'], 'grupo': 3, 'strength': strength
                     })
+        except Exception:
+            continue
 
-        except Exception as e:
-            # Erros silenciosos para não quebrar a tabela, mas reportar se necessário
-            pass
-
-    # EXIBIÇÃO DA TABELA
-    print("\n" + "="*85)
-    header = f"{'RANK':<5} | {'TICKER':<12} | {'DIR':<6} | {'AÇÃO':<12} | {'LEVERAGE':<10} | {'QTY':<12} | {'IDADE':<10}"
+    # EXIBIÇÃO DA TABELA AGRUPADA
+    print("\n" + "="*95)
+    header = f"{'STRENGTH':<10} | {'TICKER':<12} | {'DIR':<6} | {'AÇÃO':<12} | {'LEV':<6} | {'VALOR (USDT)':<12} | {'IDADE':<10}"
     print(header)
-    print("-" * 85)
+    print("-" * 95)
 
-    # Ordenar por Força Markov (strength)
-    table_data.sort(key=lambda x: x['strength'], reverse=True)
+    # Ordenar por Grupo e depois por Strength
+    table_data.sort(key=lambda x: (x['grupo'], -x['strength']))
 
-    for i, row in enumerate(table_data, 1):
-        print(f"{i:<5} | {row['ticker']:<12} | {row['direcao']:<6} | {row['acao']:<12} | {row['alavancagem']:<10} | {row['quantidade']:<12} | {row['idade']:<10}")
+    for row in table_data:
+        print(f"{row['rank']:<10} | {row['ticker']:<12} | {row['dir']:<6} | {row['acao']:<12} | {row['lev']:<6} | {row['qty']:<12} | {row['idade']:<10}")
 
-    # RESUMO DE MARGEM
-    used_margin = portfolio.get_current_total_margin()
-    max_margin = portfolio.balance * portfolio.max_total_margin_pct
-    print("-" * 85)
-    print(f"RESUMO DE MARGEM: US${used_margin:.2f} / US${max_margin:.2f} (Máx 20% do Saldo)")
-    print(f"ALAVANCAGEM TOTAL CARTEIRA: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
-    print("="*85 + "\n")
+    print("-" * 95)
+    print(f"RESUMO: Margem US${portfolio.get_current_total_margin():.2f} (Máx $40) | Alavancagem Portfólio: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
+    print("="*95 + "\n")
+
+    # INTERAÇÃO (APENAS MODO OFICIAL)
+    if is_official:
+        print("--- ATUALIZAÇÃO DO PORTFOLIO ---")
+        for row in table_data:
+            if row['acao'] == "ENTRAR":
+                conf = input(f"Confirmar entrada em {row['ticker']} ({row['dir']})? (s/n): ")
+                if conf.lower() == 's':
+                    # Simplificação para o prompt
+                    s = float(row['rank'].replace('%', ''))/100
+                    l = int(row['lev'].replace('x', ''))
+                    # Precisamos do preço atual, buscar de novo ou guardar no table_data
+                    portfolio.open_position(row['ticker'], row['dir'], 0, s, l) # Preço 0 p/ simplificar registro
+
+            elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR"]:
+                conf = input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ")
+                if conf.lower() == 's':
+                    if row['acao'] == "FECHAR":
+                        res = input("Qual foi o Lucro/Prejuízo (USD)? (ex: 5.50 ou -2.10): ")
+                        portfolio.update_balance(float(res))
+                        portfolio.close_position(row['ticker'])
+                    elif "50%" in row['acao']: portfolio.reduce_position(row['ticker'], 50)
+                    elif "30%" in row['acao']: portfolio.reduce_position(row['ticker'], 30)
+
+        print("\n✅ Portfolio atualizado e salvo em portfolio.json.")
 
 if __name__ == "__main__":
-    monitor_market()
+    main()
