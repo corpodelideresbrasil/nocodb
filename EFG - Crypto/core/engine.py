@@ -4,20 +4,14 @@ import numpy as np
 class MPRMEngine:
     """
     Motor de Sinais e Gestão de Posição do MPRM (V14.1).
-    Gerencia Ignition, Trailing Stop, N-Candles e Saídas Parciais.
-    Nativa: Não depende de pandas_ta para compatibilidade com Python 3.14+.
+    Foco no AGORA: Baseado nos regimes de Markov e física de preços.
     """
 
     def __init__(self, sl_mult=1.5):
         self.sl_mult = sl_mult
-        self.pos_state = 0 # 0: None, 1: Long, -1: Short
-        self.trail_sl = None
-        self.ignition_price = None
-        self.bars_since_ignition = 0
-        self.flat_count = 0
 
-    def _atr(self, df, length):
-        """Implementação nativa de ATR (Wilder's Smoothing)."""
+    def _atr(self, df, length=14):
+        """Cálculo nativo do ATR."""
         high_low = df['high'] - df['low']
         high_close = np.abs(df['high'] - df['close'].shift())
         low_close = np.abs(df['low'] - df['close'].shift())
@@ -25,108 +19,83 @@ class MPRMEngine:
         true_range = np.max(ranges, axis=1)
         return true_range.ewm(alpha=1/length, min_periods=length, adjust=False).mean()
 
-    def process_signals(self, df):
+    def process_signals(self, df, active_position=None):
         """
-        Gera gatilhos de entrada e saída baseados no regime e Trail.
+        Calcula o estado atual dos sinais, trailing stop e saídas parciais.
         """
-        # Preparação
+        df = df.copy()
         df['atr_sl'] = self._atr(df, 14)
-        df['ignition_long'] = False
-        df['ignition_short'] = False
-        df['exit_signal'] = False
-        df['partial_exit_50'] = False
-        df['partial_exit_30'] = False
-        df['signal_validity'] = "NONE"
-        df['trail_stop_val'] = np.nan
 
-        for i in range(1, len(df)):
+        # 1. Calcular idade do regime (Quantos candles o regime atual persiste)
+        # Fundamental para a regra dos 20 candles
+        regime_change = df['regime'] != df['regime'].shift()
+        df['regime_age'] = regime_change.cumsum().groupby(regime_change.cumsum()).cumcount()
+
+        # 2. Reconstrução do Trailing Stop (Ratcheting)
+        # O stop só existe se estivermos em regime de tendência (0 ou 1) ou com posição ativa
+        df['trail_stop'] = np.nan
+        df['flat_count'] = 0
+
+        current_trail = None
+        flat_counter = 0
+
+        # Simulamos a evolução do stop nos últimos candles para detectar o estado atual
+        # Foco nos últimos 30 candles para eficiência
+        start_idx = max(0, len(df) - 30)
+
+        for i in range(start_idx, len(df)):
             row = df.iloc[i]
             regime = row['regime']
-            close = row['close']
-            low = row['low']
-            high = row['high']
-            atr = row['atr_sl']
+            low, high, atr = row['low'], row['high'], row['atr_sl']
 
-            # --- 1. GATILHOS DE IGNIÇÃO ---
-            if regime == 0 and self.pos_state != 1:
-                df.at[df.index[i], 'ignition_long'] = True
-                self.pos_state = 1
-                self.trail_sl = low - (atr * self.sl_mult)
-                self.ignition_price = close
-                self.bars_since_ignition = 0 # Reset na ignição
-                self.flat_count = 0
+            # Lógica de Ratcheting (Apenas sobe no Long, apenas desce no Short)
+            if regime == 0: # BULL
+                new_stop = low - (atr * self.sl_mult)
+                current_trail = max(current_trail or 0, new_stop)
+            elif regime == 1: # BEAR
+                new_stop = high + (atr * self.sl_mult)
+                current_trail = min(current_trail or 1e10, new_stop)
+            else:
+                current_trail = None # Reseta em regimes Azuis/Laranjas
 
-            elif regime == 1 and self.pos_state != -1:
-                df.at[df.index[i], 'ignition_short'] = True
-                self.pos_state = -1
-                self.trail_sl = high + (atr * self.sl_mult)
-                self.ignition_price = close
-                self.bars_since_ignition = 0 # Reset na ignição
-                self.flat_count = 0
+            # Contador de Flat (Stop horizontal)
+            if i > 0 and current_trail == df.iloc[i-1].get('trail_stop'):
+                flat_counter += 1
+            else:
+                flat_counter = 0
 
-            # --- 2. VALIDADE DO SINAL (Regra dos N-Candles) ---
-            if self.pos_state != 0:
-                # Incrementa apenas se estiver em uma tendência/posição identificada
-                self.bars_since_ignition += 1
+            df.at[df.index[i], 'trail_stop'] = current_trail
+            df.at[df.index[i], 'flat_count'] = flat_counter
 
-                if self.bars_since_ignition <= 10:
-                    df.at[df.index[i], 'signal_validity'] = "FRESH"
-                elif self.bars_since_ignition <= 20:
-                    df.at[df.index[i], 'signal_validity'] = "ALERT"
-                else:
-                    df.at[df.index[i], 'signal_validity'] = "EXPIRED"
+        # 3. Gatilhos de Decisão (Último candle)
+        last = df.iloc[-1]
+        decision = {
+            'ignition_long': last['regime'] == 0 and last['regime_age'] == 0,
+            'ignition_short': last['regime'] == 1 and last['regime_age'] == 0,
+            'regime_age': last['regime_age'],
+            'signal_status': "FRESH" if last['regime_age'] <= 10 else "ALERT" if last['regime_age'] <= 20 else "EXPIRED",
+            'trail_stop': last['trail_stop'],
+            'flat_count': last['flat_count'],
+            'atr': last['atr_sl']
+        }
 
-            # --- 3. GESTÃO DE SAÍDA POR REGIME (Break) ---
-            elif (regime == 2 or regime == 3) and self.pos_state != 0:
-                df.at[df.index[i], 'exit_signal'] = True
-                self._reset_state()
+        # 4. Lógica de Saída (Se houver posição ativa)
+        if active_position:
+            price = last['close']
+            atr = last['atr_sl']
+            trail = last['trail_stop']
 
-            # --- 4. TRAILING STOP E SAÍDAS PARCIAIS ---
-            if self.pos_state != 0:
-                prev_trail = self.trail_sl
+            # Saída por Regime (Manual: 2 ou 3)
+            decision['exit_total'] = last['regime'] in [2, 3]
 
-                # Ratcheting
-                if self.pos_state == 1:
-                    current_sl = low - (atr * self.sl_mult)
-                    self.trail_sl = max(self.trail_sl or 0, current_sl)
-                    if close < self.trail_sl:
-                        df.at[df.index[i], 'exit_signal'] = True
-                        self._reset_state()
-                else: # Short
-                    current_sl = high + (atr * self.sl_mult)
-                    self.trail_sl = min(self.trail_sl or 1e10, current_sl)
-                    if close > self.trail_sl:
-                        df.at[df.index[i], 'exit_signal'] = True
-                        self._reset_state()
+            # Saída por Stop
+            if active_position['side'] == 'LONG' and trail and price < trail:
+                decision['exit_total'] = True
+            elif active_position['side'] == 'SHORT' and trail and price > trail:
+                decision['exit_total'] = True
 
-                # Verificação de Linha Flat (Saída 50%)
-                if self.pos_state != 0:
-                    if self.trail_sl == prev_trail:
-                        self.flat_count += 1
-                    else:
-                        self.flat_count = 0
+            # Saídas Parciais
+            decision['exit_50_flat'] = last['flat_count'] >= 3
+            decision['exit_30_stretch'] = trail and abs(price - trail) > atr
 
-                    if self.flat_count >= 3:
-                        df.at[df.index[i], 'partial_exit_50'] = True
-
-                    # Verificação de Afastamento Excessivo (Saída 30%)
-                    dist = abs(close - self.trail_sl) if self.trail_sl else 0
-                    if dist > atr:
-                        df.at[df.index[i], 'partial_exit_30'] = True
-
-            df.at[df.index[i], 'trail_stop_val'] = self.trail_sl
-
-        return df
-
-    def _reset_state(self):
-        self.pos_state = 0
-        self.trail_sl = None
-        self.ignition_price = None
-        self.bars_since_ignition = 0
-        self.flat_count = 0
-
-    def check_trade_validity(self, spread, slippage, atr):
-        """
-        Regra de Gestão de Risco: Spread + Slippage <= 20% ATR.
-        """
-        return (spread + slippage) <= (0.20 * atr)
+        return decision
