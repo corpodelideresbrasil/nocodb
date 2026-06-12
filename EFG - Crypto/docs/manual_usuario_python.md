@@ -26,12 +26,14 @@ Diferente do HUD visual do TradingView, o programa Python opera com gatilhos de 
 *   **⚡ LONG:** Gerado quando o regime transiciona para Bull (0) e não há posição aberta.
 *   **🔥 SHORT:** Gerado quando o regime transiciona para Bear (1) e não há posição aberta.
 
-### Validade do Sinal (Regra dos 20 Candles)
-O motor monitora internamente a variável `bars_since_ignition`.
-*   O programa marcará como "Válido" apenas sinais com menos de 10 barras (entrada a mercado).
-*   Entre 11 e 20 barras, o sistema sugerirá entrada apenas em Pullback.
+### Critérios de Entrada (Gatilho ENTRAR)
+Para um ativo receber a recomendação `ENTRAR`, ele deve satisfazer:
+1.  **Regime:** Deve estar em Regime 0 (BULL) ou 1 (BEAR).
+2.  **Idade (N-Candles):** O sinal deve ter idade entre 0 e 20 candles (FRESH ou ALERT). Sinais EXPIRED são descartados.
+3.  **Ranqueamento:** O ativo deve ter força de Markov suficiente para estar entre os top-ranked.
+4.  **Limite de Margem:** Deve haver espaço no orçamento de 20% da margem total da carteira ($40.00 para um saldo de $200.00). Caso o limite seja atingido, ativos com sinais válidos mas menor prioridade serão marcados como `LIMITE OFF`.
 
-## 3. Gestão de Risco Automatizada
+## 4. Gestão de Risco Automatizada
 
 O módulo `Engine` inclui a verificação de viabilidade operacional:
 *   **Custo Transacional:** O programa calcula se `Spread + Slippage` excede **20% do ATR**. Caso exceda, o sinal é marcado como "Inviável" no console.
