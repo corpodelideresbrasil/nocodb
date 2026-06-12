@@ -32,7 +32,7 @@ O módulo `Engine` inclui a verificação de viabilidade operacional:
 
 1.  Certifique-se de ter as dependências instaladas:
     ```bash
-    pip install -r requirements.txt
+    python3 -m pip install -r requirements.txt
     ```
 2.  Para monitorar os ativos, edite a lista no arquivo `main.py` e execute:
     ```bash
