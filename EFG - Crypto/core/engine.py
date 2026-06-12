@@ -36,7 +36,7 @@ class MPRMEngine:
         df['exit_signal'] = False
         df['partial_exit_50'] = False
         df['partial_exit_30'] = False
-        df['signal_validity'] = "NONE" # FRESH, ALERT, EXPIRED
+        df['signal_validity'] = "NONE"
         df['trail_stop_val'] = np.nan
 
         for i in range(1, len(df)):
@@ -53,7 +53,7 @@ class MPRMEngine:
                 self.pos_state = 1
                 self.trail_sl = low - (atr * self.sl_mult)
                 self.ignition_price = close
-                self.bars_since_ignition = 0
+                self.bars_since_ignition = 0 # Reset na ignição
                 self.flat_count = 0
 
             elif regime == 1 and self.pos_state != -1:
@@ -61,11 +61,14 @@ class MPRMEngine:
                 self.pos_state = -1
                 self.trail_sl = high + (atr * self.sl_mult)
                 self.ignition_price = close
-                self.bars_since_ignition = 0
+                self.bars_since_ignition = 0 # Reset na ignição
                 self.flat_count = 0
 
             # --- 2. VALIDADE DO SINAL (Regra dos N-Candles) ---
             if self.pos_state != 0:
+                # Incrementa apenas se estiver em uma tendência/posição identificada
+                self.bars_since_ignition += 1
+
                 if self.bars_since_ignition <= 10:
                     df.at[df.index[i], 'signal_validity'] = "FRESH"
                 elif self.bars_since_ignition <= 20:
@@ -97,7 +100,7 @@ class MPRMEngine:
                         self._reset_state()
 
                 # Verificação de Linha Flat (Saída 50%)
-                if self.pos_state != 0: # Checa se ainda está posicionado após o Trail
+                if self.pos_state != 0:
                     if self.trail_sl == prev_trail:
                         self.flat_count += 1
                     else:
@@ -112,7 +115,6 @@ class MPRMEngine:
                         df.at[df.index[i], 'partial_exit_30'] = True
 
             df.at[df.index[i], 'trail_stop_val'] = self.trail_sl
-            self.bars_since_ignition += 1
 
         return df
 
