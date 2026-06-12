@@ -1,11 +1,11 @@
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
 
 class MPRMEngine:
     """
     Motor de Sinais e Gestão de Posição do MPRM (V14.1).
     Gerencia Ignition, Trailing Stop, N-Candles e Saídas Parciais.
+    Nativa: Não depende de pandas_ta para compatibilidade com Python 3.14+.
     """
 
     def __init__(self, sl_mult=1.5):
@@ -16,12 +16,21 @@ class MPRMEngine:
         self.bars_since_ignition = 0
         self.flat_count = 0
 
+    def _atr(self, df, length):
+        """Implementação nativa de ATR (Wilder's Smoothing)."""
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        return true_range.ewm(alpha=1/length, min_periods=length, adjust=False).mean()
+
     def process_signals(self, df):
         """
         Gera gatilhos de entrada e saída baseados no regime e Trail.
         """
         # Preparação
-        df['atr_sl'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+        df['atr_sl'] = self._atr(df, 14)
         df['ignition_long'] = False
         df['ignition_short'] = False
         df['exit_signal'] = False
@@ -63,8 +72,6 @@ class MPRMEngine:
                     df.at[df.index[i], 'signal_validity'] = "ALERT"
                 else:
                     df.at[df.index[i], 'signal_validity'] = "EXPIRED"
-                    # O manual diz para não executar, mas se já estiver dentro, o trail manda.
-                    # Aqui apenas marcamos para o console.
 
             # --- 3. GESTÃO DE SAÍDA POR REGIME (Break) ---
             elif (regime == 2 or regime == 3) and self.pos_state != 0:
@@ -90,18 +97,19 @@ class MPRMEngine:
                         self._reset_state()
 
                 # Verificação de Linha Flat (Saída 50%)
-                if self.trail_sl == prev_trail:
-                    self.flat_count += 1
-                else:
-                    self.flat_count = 0
+                if self.pos_state != 0: # Checa se ainda está posicionado após o Trail
+                    if self.trail_sl == prev_trail:
+                        self.flat_count += 1
+                    else:
+                        self.flat_count = 0
 
-                if self.flat_count >= 3:
-                    df.at[df.index[i], 'partial_exit_50'] = True
+                    if self.flat_count >= 3:
+                        df.at[df.index[i], 'partial_exit_50'] = True
 
-                # Verificação de Afastamento Excessivo (Saída 30%)
-                dist = abs(close - self.trail_sl) if self.trail_sl else 0
-                if dist > atr:
-                    df.at[df.index[i], 'partial_exit_30'] = True
+                    # Verificação de Afastamento Excessivo (Saída 30%)
+                    dist = abs(close - self.trail_sl) if self.trail_sl else 0
+                    if dist > atr:
+                        df.at[df.index[i], 'partial_exit_30'] = True
 
             df.at[df.index[i], 'trail_stop_val'] = self.trail_sl
             self.bars_since_ignition += 1
