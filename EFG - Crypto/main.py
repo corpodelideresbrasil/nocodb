@@ -1,49 +1,45 @@
 from core.data_provider import DataProvider
 from core.calculator import MPRMCalculator
 from core.engine import MPRMEngine
-import time
 
 def monitor_market(symbols):
-    """
-    Loop principal de monitoramento de ativos.
-    """
     provider = DataProvider()
-    calc = MPRMCalculator(markov_len=20)
+    calc = MPRMCalculator()
 
-    print("--- Iniciando Monitoramento MPRM V14.1 ---")
+    print("--- Monitorando MPRM V14.1 ---")
 
     for symbol in symbols:
-        print(f"\nAnalisando {symbol}...")
+        try:
+            # 1. Coleta de dados
+            df = provider.fetch_ohlcv(symbol)
 
-        # 1. Obter Dados
-        df = provider.fetch_ohlcv(symbol, timeframe='1d', limit=100)
-        if df is None: continue
+            # 2. Cálculos matemáticos
+            df = calc.calculate_physics(df)
+            df = calc.calculate_markov(df)
+            df = calc.identify_regime(df)
 
-        # 2. Calcular Lógica Matemática (Sem estado)
-        df = calc.calculate_physics(df)
-        df = calc.calculate_markov(df)
-        df = calc.identify_regime(df)
+            # 3. Processamento de sinais (Estado por ativo)
+            engine = MPRMEngine()
+            df = engine.process_signals(df)
 
-        # 3. Processar Sinais (Com estado específico por ativo)
-        engine = MPRMEngine(sl_mult=1.5)
-        df = engine.process_signals(df)
+            # 4. Exibição de resultados
+            last = df.iloc[-1]
+            print(f"\nAtivo: {symbol} | Regime: {last['regime']} | Estado: {last['dynamic_state']}")
+            print(f"Validade: {last['signal_validity']}")
 
-        # 4. Verificar Último Estado (Gatilhos e Alertas)
-        last_bar = df.iloc[-1]
+            if last['ignition_long']:
+                print("⚡ GATILHO COMPRA!")
+            elif last['ignition_short']:
+                print("🔥 GATILHO VENDA!")
 
-        if last_bar['ignition_long']:
-            print(f"  [GATILHO] ⚡ IGNITION LONG em {symbol}!")
-        elif last_bar['ignition_short']:
-            print(f"  [GATILHO] 🔥 IGNITION SHORT em {symbol}!")
+            if last['partial_exit_50']:
+                print("⚠️ ALERTA: Saída Parcial 50% (Flat)")
+            if last['partial_exit_30']:
+                print("🚀 ALERTA: Preço Esticado (Saída 30%)")
 
-        if last_bar['partial_exit_50']:
-            print(f"  [ALERTA] ⚠️ LINHA FLAT: Sugestão de Realização Parcial (50%)")
-        if last_bar['partial_exit_30']:
-            print(f"  [ALERTA] 🚀 PREÇO ESTICADO (>1 ATR): Sugestão de Realização Parcial (30%)")
-
-        print(f"  Regime Atual: {last_bar['regime']} | Validade: {last_bar['signal_validity']}")
-        print(f"  Probabilidades Markov: Bull {last_bar['p_bull']:.1%} | Bear {last_bar['p_bear']:.1%}")
+        except Exception as e:
+            print(f"Erro ao processar {symbol}: {e}")
 
 if __name__ == "__main__":
-    # Exemplo com alguns ativos
+    # Lista de ativos para monitorar
     monitor_market(['BTC/USDT', 'ETH/USDT', 'SOL/USDT'])
