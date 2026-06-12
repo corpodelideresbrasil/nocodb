@@ -8,9 +8,17 @@ O programa automatiza os cálculos que anteriormente eram manuais ou limitados a
 
 *   **Calculator (`core/calculator.py`):** Realiza toda a matemática pesada (Normalização ATR, Forças Bull/Bear, EMA de Markov).
 *   **Engine (`core/engine.py`):** Gere as regras de negócio, sinais de ignição e o trailing stop dinâmico.
-*   **Data Provider (`core/data_provider.py`):** Conecta-se a exchanges (padrão: Binance) para coletar dados OHLCV em tempo real.
+*   **Portfolio Manager (`core/portfolio.py`):** Controla as posições abertas e aplica as regras de risco (Saldo 200 USD, 2% margem, 5X alavancagem).
+*   **Data Provider (`core/data_provider.py`):** Conecta-se a exchanges (padrão: Binance Futures) para coletar dados OHLCV em tempo real.
 
-## 2. Interpretação de Sinais em Python
+## 2. Gestão de Posições (portfolio.json)
+
+O programa utiliza um arquivo chamado `portfolio.json` localizado na raiz da pasta do projeto para rastrear quais ativos você está operando.
+*   **Criação:** O arquivo é criado automaticamente na primeira vez que uma posição é aberta.
+*   **Uso:** Sinais de **saída parcial (50%/30%)** e **saída total** só serão exibidos para ativos que constam neste arquivo.
+*   **Importante:** Você pode editar este arquivo manualmente se quiser adicionar posições que já possui.
+
+## 3. Interpretação de Sinais em Python
 
 Diferente do HUD visual do TradingView, o programa Python opera com gatilhos de dados:
 

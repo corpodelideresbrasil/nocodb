@@ -38,8 +38,8 @@ def monitor_market():
 
             # Motor de Decisão
             active_pos = portfolio.positions.get(symbol)
-            engine = MPRMEngine(sl_mult=1.5)
-            decision = engine.process_signals(df, active_position=active_pos)
+            engine = MPRMEngine(sl_mult=1.5, active_position=active_pos)
+            decision = engine.process_signals(df)
 
             last = df.iloc[-1]
 
