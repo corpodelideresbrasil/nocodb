@@ -14,23 +14,18 @@ def load_assets(filepath):
             if clean and not clean.startswith('#'): symbols.append(clean)
     return symbols
 
-def print_status_table(table_data, portfolio, title="STATUS DO MERCADO", show_age=True):
+def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
     """Função centralizada para imprimir a tabela de ativos e o resumo com coluna de MOTIVO."""
     if not table_data:
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    # Ajuste de largura total: Adicionando coluna MOTIVO (18 chars)
-    # Anterior: 135 (com idade) ou 123 (sem idade)
-    # Novo: 153 (com idade) ou 141 (sem idade)
-
-    print("\n" + "="*153)
+    col_width = 141
+    print("\n" + "="*col_width)
     print(f" {title} ")
-    print("="*153)
+    print("="*col_width)
 
-    col_width = 153 if show_age else 141
     header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<18} | {'STOP LOSS':<12} | {'LEV':<4} | {'VALOR (USDT)':<15}"
-    if show_age: header += f" | {'IDADE':<10}"
 
     print(header)
     print("-" * col_width)
@@ -39,13 +34,12 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO", show_ag
         acao = row.get('acao', '---')
         motivo = row.get('motivo', '---')
         line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {acao:<16} | {motivo:<18} | {row['stop']:<12} | {row['lev']:<4} | {row['qty']:<15}"
-        if show_age: line += f" | {row['idade']:<10}"
         print(line)
 
     print("-" * col_width)
     print(f"RESUMO: Saldo US${portfolio.balance:.2f} | Margem Ocupada: US${portfolio.get_current_total_margin():.2f} / US${portfolio.balance * 0.25:.2f} (25%)")
     print(f"ALAVANCAGEM TOTAL CARTEIRA: {portfolio.get_current_total_leverage():.2f}X / 5.0X")
-    print("="*135 + "\n")
+    print("="*col_width + "\n")
 
 def main():
     print("\n" + "="*35)
@@ -176,7 +170,7 @@ def main():
                 row['idade'] = f"{pos['bars_held']} cnd"
                 # Garantimos que regime e stop estejam presentes
                 final_list.append(row)
-        print_status_table(final_list, portfolio, "CARTEIRA ATUALIZADA (SITUAÇÃO ATUAL)", show_age=False)
+        print_status_table(final_list, portfolio, "CARTEIRA ATUALIZADA (SITUAÇÃO ATUAL)")
 
 if __name__ == "__main__":
     main()
