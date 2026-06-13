@@ -1,70 +1,61 @@
 # Manual do Usuário: Programa Python EFG - Crypto (MPRM V14.1)
 
-Este programa é uma implementação em Python do modelo **Market Physics Regime Model (MPRM V14.1)**, projetado para monitorar múltiplos ativos simultaneamente e identificar regimes de mercado baseados em física de preços e cadeias de Markov.
+Este programa é uma implementação em Python do modelo **Market Physics Regime Model (MPRM V14.1)**. Ele foi desenvolvido sob uma arquitetura amnésica (Markoviana), onde cada decisão é baseada exclusivamente no jogo de energias e forças do estado presente.
 
-## 1. Estrutura do Programa
+## 1. Estrutura e Operação
 
-O programa automatiza os cálculos que anteriormente eram manuais ou limitados ao TradingView:
+O sistema opera em dois modos distintos, selecionáveis ao iniciar:
 
-*   **Calculator (`core/calculator.py`):** Realiza toda a matemática pesada (Normalização ATR, Forças Bull/Bear, EMA de Markov).
-*   **Engine (`core/engine.py`):** Gere as regras de negócio, sinais de ignição e o trailing stop dinâmico.
-*   **Portfolio Manager (`core/portfolio.py`):** Controla as posições abertas e aplica as regras de risco (Saldo 200 USD, 2% margem, 5X alavancagem).
-*   **Data Provider (`core/data_provider.py`):** Conecta-se a exchanges (padrão: Binance Futures) para coletar dados OHLCV em tempo real.
+*   **1. Rodada Oficial:** Deve ser executada uma vez ao dia (ex: pela manhã). Este modo é interativo e permite confirmar entradas e saídas, atualizando o saldo real e as posições no arquivo `portfolio.json`.
+*   **2. Acompanhamento:** Modo de leitura para monitoramento intraday. Não altera dados e serve para consultar regimes e níveis de Stop Loss em tempo real.
 
 ## 2. Gestão de Posições (portfolio.json)
 
-O programa utiliza um arquivo chamado `portfolio.json` localizado na raiz da pasta do projeto para rastrear quais ativos você está operando.
-*   **Criação:** O arquivo é criado automaticamente na primeira vez que uma posição é aberta.
-*   **Uso:** Sinais de **saída parcial (50%/30%)** e **saída total** só serão exibidos para ativos que constam neste arquivo.
-*   **Importante:** Você pode editar este arquivo manualmente se quiser adicionar posições que já possui.
+O arquivo `portfolio.json` é o "livro de ordens" do programa.
+*   **Persistência:** Ele salva o saldo (iniciando em $200.00) e os detalhes de cada contrato aberto (Margem, Alavancagem, Lado).
+*   **Sincronização:** Alertas de saída (Total ou Parcial) só são gerados para ativos que constam neste arquivo, evitando sinais irrelevantes.
 
-## 3. Interpretação de Sinais em Python
+## 3. Lógica de Sinais e Tomada de Decisão
 
-Diferente do HUD visual do TradingView, o programa Python opera com gatilhos de dados:
+### A. Critérios de Entrada (Gatilho ENTRAR)
+Para garantir uma vantagem estatística sobre o ruído (que é de 25% em 4 estados), o sistema exige:
+1.  **Vencer a Neutralidade:** A Força de Markov do regime dominante (Bull ou Bear) deve ser **>= 35%**.
+2.  **Momento Físico (Expansion):** O estado dinâmico deve ser **EXPANSION**. Entrar em *Contraction* é evitado, pois o movimento ainda não tem velocidade.
+3.  **Margem Disponível:** A nova posição deve caber no teto de **25% de margem total** da carteira ($50.00 de um capital de $200.00).
+4.  **Validade:** Sinais com mais de 20 candles de idade (EXPIRED) são descartados por perda de inércia original.
 
-### Gatilhos de Ignição (Ignition)
-*   **⚡ LONG:** Gerado quando o regime transiciona para Bull (0) e não há posição aberta.
-*   **🔥 SHORT:** Gerado quando o regime transiciona para Bear (1) e não há posição aberta.
+### B. Critérios de Saída Total (Gatilho FECHAR)
+O encerramento imediato da posição ocorre se:
+1.  **Inversão de Regime:** O mercado muda para um estado desfavorável (ex: estava em BULL e foi para COMP, EXH ou BEAR).
+2.  **Stop Loss Atingido:** O preço cruza o valor da `Inertial Trail` (coluna STOP LOSS da tabela).
 
-### Critérios de Entrada (Gatilho ENTRAR)
-Para um ativo receber a recomendação `ENTRAR`, ele deve satisfazer:
-1.  **Regime:** Deve estar em Regime 0 (BULL) ou 1 (BEAR).
-2.  **Idade (N-Candles):** O sinal deve ter idade entre 0 e 20 candles (FRESH ou ALERT). Sinais EXPIRED são descartados.
-3.  **Ranqueamento:** O ativo deve ter força de Markov suficiente para estar entre os top-ranked.
-4.  **Limite de Margem:** Deve haver espaço no orçamento de 20% da margem total da carteira ($40.00 para um saldo de $200.00). Caso o limite seja atingido, ativos com sinais válidos mas menor prioridade serão marcados como `LIMITE OFF`.
+### C. Lógica das Saídas Parciais (Reduções)
+As reduções visam assegurar lucros e minimizar a exposição em momentos de exaustão ou perda de impulso, sem encerrar a tese principal:
 
-## 4. Mapeamento Físico do Modelo (Termodinâmica)
+*   **Redução de 50% (Linha Trail FLAT):**
+    *   *Gatilho:* O Trailing Stop (`Inertial Trail`) permanece no mesmo valor por **3 candles consecutivos**.
+    *   *Fundamento:* Indica que o preço não está mais renovando mínimas (em Long) ou máximas (em Short). O movimento perdeu impulso direcional.
+*   **Redução de 30% (Preço Esticado):**
+    *   *Gatilho:* A distância entre o preço atual e a linha de Stop Loss é **maior que 1.0 ATR**.
+    *   *Fundamento:* O preço se afastou demais da sua base de inércia (sistema sobrecarregado). Realiza-se lucro parcial para proteção contra pullbacks violentos.
 
-Para os perfis de engenharia, o programa traduz as grandezas de mercado nas seguintes analogias físicas:
+*Nota:* Diferente de versões anteriores, não há "tempo de carência". Se o modelo físico detectar perda de energia no candle seguinte à entrada, a redução será sugerida imediatamente para preservar o capital.
 
-*   **Velocidade (`body_work`):** O deslocamento líquido do preço no candle. Representa o trabalho útil realizado pela força dominante.
-*   **Energia Cinética (`f_bull`, `f_bear`):** A energia em movimento que impulsiona o preço em uma direção.
-*   **Energia Potencial / Compressão (`f_comp`):** Quando a volatilidade (`range`) é menor que a média (`ATR`), a "mola" do mercado está comprimindo, acumulando energia para a próxima explosão.
-*   **Entropia / Atrito (`f_exh`):** Representada pelos pavios excessivos. Indica caos e perda de eficiência no movimento (Exaustão).
-*   **Inércia (`markov_len`):** A suavização de Markov define a resistência do sistema a mudar de regime. Uma inércia maior exige mais "energia nova" para alterar o estado de Bull para Bear, por exemplo.
-*   **Momento e Impulso (`Inertial Trail`):** O trailing stop funciona como um vetor que segue o movimento. Se ele fica "Flat", indica perda de impulso. Se o preço se afasta demais (> 1 ATR), indica um sistema sobrecarregado (esticado).
+## 4. Mapeamento Físico (Termodinâmica)
 
-## 5. Gestão de Risco Automatizada
+*   **Velocidade (`body_work`):** Deslocamento líquido do preço.
+*   **Energia Cinética (`f_bull`, `f_bear`):** Impulso direcional.
+*   **Energia Potencial (`f_comp`):** Acúmulo/Compressão da mola (Range < ATR).
+*   **Entropia / Atrito (`f_exh`):** Caos e pavios excessivos (Exaustão).
+*   **Inércia (Markov EMA):** Resistência à mudança de estado.
+*   **Vetor de Movimento (`Inertial Trail`):** O ponto de Stop Loss que segue a força dominante.
 
-O módulo `Engine` inclui a verificação de viabilidade operacional:
-*   **Custo Transacional:** O programa calcula se `Spread + Slippage` excede **20% do ATR**. Caso exceda, o sinal é marcado como "Inviável" no console.
+## 5. Gestão de Risco Estrita
 
-## 4. Como Executar
-
-1.  Certifique-se de ter as dependências instaladas:
-    ```bash
-    python3 -m pip install -r requirements.txt
-    ```
-2.  Para monitorar os ativos, edite a lista no arquivo `main.py` e execute:
-    ```bash
-    python3 main.py
-    ```
-
-## 5. Saídas Parciais e Trailing Stop
-
-O programa monitora o `trail_stop_val` a cada novo candle:
-*   **Afastamento Excessivo:** Se o preço atual se distanciar > 1 ATR da linha de trail, o sistema emitirá um alerta de **Realização Parcial (30%)**.
-*   **Linha Flat:** O sistema detecta se a linha de Trail não mudou de valor por 3 candles, sugerindo **Realização Parcial (50%)**.
+*   **Margem por Ativo:** 2% do saldo nominal ($4.00 para capital de $200).
+*   **Margem Total:** Máximo de 25% ($50.00) comprometidos simultaneamente.
+*   **Alavancagem:** Sugerida entre **1x e 15x** (inteiros), calculada para maximizar o lucro com base na força de Markov.
+*   **Alavancagem do Portfólio:** Monitorada para não exceder **5.0X** do capital total.
 
 ---
-*MPRM V14.1 Python Edition - Focado na Termodinâmica do Presente.*
+*EFG - Crypto Monitor | Física de Mercado Aplicada.*
