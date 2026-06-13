@@ -80,7 +80,8 @@ class PortfolioManager:
             'leverage': int(leverage),
             'notional_usdt': float(notional),
             'markov_strength': float(strength),
-            'bars_held': 0 # Inicia contador de candles
+            'bars_held': 0, # Inicia contador de candles
+            'last_reduction_trail': None
         }
         self.save()
         return True
@@ -100,10 +101,12 @@ class PortfolioManager:
             del self.data['positions'][symbol]
             self.save()
 
-    def reduce_position(self, symbol, pct):
+    def reduce_position(self, symbol, pct, trail_price=None):
         if symbol in self.data['positions']:
             pos = self.data['positions'][symbol]
             factor = 1 - (pct / 100)
             pos['margin_usd'] *= factor
             pos['notional_usdt'] *= factor
+            if trail_price is not None:
+                pos['last_reduction_trail'] = float(trail_price)
             self.save()

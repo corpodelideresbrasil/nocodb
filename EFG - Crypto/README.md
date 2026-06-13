@@ -45,7 +45,7 @@ python3 -m pip install -r requirements.txt
 Para sincronizar com seu GitHub:
 ```bash
 git init
-git remote add origin https://github.com/corpodelideresbrasil/python
+git remote add origin https://github.com/corpodelideresbrasil/nocodb
 git add .
 git commit -m "Initial MPRM Python Setup"
 git push -u origin main
