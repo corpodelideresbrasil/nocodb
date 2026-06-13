@@ -15,24 +15,30 @@ def load_assets(filepath):
     return symbols
 
 def print_status_table(table_data, portfolio, title="STATUS DO MERCADO", show_age=True):
-    """Função centralizada para imprimir a tabela de ativos e o resumo."""
+    """Função centralizada para imprimir a tabela de ativos e o resumo com coluna de MOTIVO."""
     if not table_data:
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    print("\n" + "="*135)
-    print(f" {title} ")
-    print("="*135)
+    # Ajuste de largura total: Adicionando coluna MOTIVO (18 chars)
+    # Anterior: 135 (com idade) ou 123 (sem idade)
+    # Novo: 153 (com idade) ou 141 (sem idade)
 
-    col_width = 135 if show_age else 123
-    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<14} | {'STOP LOSS':<12} | {'LEV':<4} | {'VALOR (USDT)':<15}"
+    print("\n" + "="*153)
+    print(f" {title} ")
+    print("="*153)
+
+    col_width = 153 if show_age else 141
+    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<18} | {'STOP LOSS':<12} | {'LEV':<4} | {'VALOR (USDT)':<15}"
     if show_age: header += f" | {'IDADE':<10}"
 
     print(header)
     print("-" * col_width)
 
     for row in table_data:
-        line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {row['acao']:<14} | {row['stop']:<12} | {row['lev']:<4} | {row['qty']:<15}"
+        acao = row.get('acao', '---')
+        motivo = row.get('motivo', '---')
+        line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {acao:<16} | {motivo:<18} | {row['stop']:<12} | {row['lev']:<4} | {row['qty']:<15}"
         if show_age: line += f" | {row['idade']:<10}"
         print(line)
 
@@ -82,23 +88,39 @@ def main():
             stop_str = f"{stop_val:.4f}" if stop_val and not np.isnan(stop_val) else "---"
 
             if active_pos:
-                if decision.get('exit_total'): acao, grupo = "FECHAR", 2
-                elif decision.get('exit_50_flat'): acao, grupo = "REDUZIR 50%", 2
-                elif decision.get('exit_30_stretch'): acao, grupo = "REDUZIR 30%", 2
-                else: acao, grupo = "MANTER", 1
+                motivo = "OK"
+                if decision.get('exit_total'):
+                    acao, grupo, motivo = "FECHAR TOTAL", 2, "REGIME/STOP"
+                elif decision.get('exit_50_flat'):
+                    acao, grupo, motivo = "REDUZIR 50%", 2, "TRAIL FLAT (3x)"
+                elif decision.get('exit_30_stretch'):
+                    acao, grupo, motivo = "REDUZIR 30%", 2, "PREÇO ESTICADO"
+                else:
+                    acao, grupo = "MANTER", 1
 
-                # SUPRESSÃO DE REDUÇÕES REPETIDAS NO MESMO RASTRO
-                if acao.startswith("REDUZIR") and active_pos.get('last_reduction_trail') == decision.get('trail_stop'):
+                # Lógica de Supressão Visual e Funcional
+                current_trail = decision.get('trail_stop')
+                last_reduction = active_pos.get('last_reduction_trail')
+
+                # Tolerância para flutuações mínimas de float
+                is_already_reduced = False
+                if last_reduction and current_trail:
+                    if abs(last_reduction - current_trail) < (last['close'] * 0.0001):
+                        is_already_reduced = True
+
+                if acao.startswith("REDUZIR") and is_already_reduced:
+                    motivo = f"JÁ REDUZIDO ({acao.split()[-1]})"
                     acao = "MANTER"
                     grupo = 1
 
                 processed_data.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
+                    'motivo': motivo,
                     'stop': stop_str, 'lev': f"{int(active_pos['leverage'])}x",
                     'qty': f"{active_pos['notional_usdt']:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
                     'grupo': grupo, 'strength': 1.1, 'price': last['close'],
-                    'trail_stop_raw': decision.get('trail_stop')
+                    'trail_stop_raw': current_trail
                 })
             elif decision['ignition_long'] or decision['ignition_short']:
                 # CRITÉRIO DE ENTRADA TEÓRICO:
@@ -112,6 +134,7 @@ def main():
                         processed_data.append({
                             'rank': f"{strength*100:4.1f}%",
                             'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
+                            'motivo': "MARKOV >= 35%",
                             'stop': stop_str, 'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
                             'idade': "FRESH", 'grupo': 3, 'strength': strength, 'price': last['close']
                         })
@@ -130,11 +153,11 @@ def main():
                     if input(f"Confirmar entrada em {row['ticker']}? (s/n): ").lower() == 's':
                         portfolio.open_position(row['ticker'], row['dir'], row['price'], float(row['rank'].replace('%',''))/100, int(row['lev'].replace('x','')))
 
-            elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR"]:
+            elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR TOTAL"]:
                 if input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ").lower() == 's':
                     res_str = input("Lucro/Prejuízo Realizado (USD) (digite 0 se não houve saída financeira)?: ").replace(',', '.')
                     portfolio.update_balance(float(res_str))
-                    if row['acao'] == "FECHAR":
+                    if row['acao'] == "FECHAR TOTAL":
                         portfolio.close_position(row['ticker'])
                     elif "50%" in row['acao']: portfolio.reduce_position(row['ticker'], 50, trail_price=row.get('trail_stop_raw'))
                     elif "30%" in row['acao']: portfolio.reduce_position(row['ticker'], 30, trail_price=row.get('trail_stop_raw'))
