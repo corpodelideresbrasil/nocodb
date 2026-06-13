@@ -4,58 +4,47 @@ Este programa é uma implementação em Python do modelo **Market Physics Regime
 
 ## 1. Estrutura e Operação
 
-O sistema opera em dois modos distintos, selecionáveis ao iniciar:
+O sistema opera em dois modos distintos:
+*   **1. Rodada Oficial:** Executada uma vez ao dia para atualizar o saldo real e as posições no arquivo `portfolio.json`.
+*   **2. Acompanhamento:** Modo de leitura para consulta de regimes e níveis de Stop Loss (Inertial Trail) em tempo real.
 
-*   **1. Rodada Oficial:** Deve ser executada uma vez ao dia (ex: pela manhã). Este modo é interativo e permite confirmar entradas e saídas, atualizando o saldo real e as posições no arquivo `portfolio.json`.
-*   **2. Acompanhamento:** Modo de leitura para monitoramento intraday. Não altera dados e serve para consultar regimes e níveis de Stop Loss em tempo real.
+## 2. Lógica de Sinais: A Física por Trás do Modelo
 
-## 2. Gestão de Posições (portfolio.json)
-
-O arquivo `portfolio.json` é o "livro de ordens" do programa.
-*   **Persistência:** Ele salva o saldo (iniciando em $200.00) e os detalhes de cada contrato aberto (Margem, Alavancagem, Lado).
-*   **Sincronização:** Alertas de saída (Total ou Parcial) só são gerados para ativos que constam neste arquivo, evitando sinais irrelevantes.
-
-## 3. Lógica de Sinais e Tomada de Decisão
+O MPRM não olha para o "gráfico", ele olha para a **termodinâmica do preço**.
 
 ### A. Critérios de Entrada (Gatilho ENTRAR)
-Para garantir uma vantagem estatística sobre o ruído (que é de 25% em 4 estados), o sistema exige:
-1.  **Vencer a Neutralidade:** A Força de Markov do regime dominante (Bull ou Bear) deve ser **>= 35%**.
-2.  **Momento Físico (Expansion):** O estado dinâmico deve ser **EXPANSION**. Entrar em *Contraction* é evitado, pois o movimento ainda não tem velocidade.
-3.  **Margem Disponível:** A nova posição deve caber no teto de **25% de margem total** da carteira ($50.00 de um capital de $200.00).
-4.  **Validade:** Sinais com mais de 20 candles de idade (EXPIRED) são descartados por perda de inércia original.
+Para garantir uma vantagem estatística sobre o ruído, o sistema utiliza o conceito de **Relação Sinal-Ruído (SNR)**:
+1.  **Vencer a Neutralidade (>= 35%):** Em um sistema de 4 estados (Bull, Bear, Comp, Exh), a chance aleatória de cada um é 25%. Uma força de 35% representa um aumento de **40% sobre a base neutra**, confirmando que a energia direcional superou o ruído estatístico. O ajuste de 40% para 35% visa capturar o **início da aceleração** (Ignition), evitando entrar quando o movimento já está em velocidade terminal.
+2.  **Momento Físico (Expansion):** O estado deve ser **EXPANSION**. Entrar em *Contraction* seria antecipar um movimento sem velocidade de corpo.
+3.  **Amnésia:** A decisão é baseada na transição de estado *agora*.
 
-### B. Critérios de Saída Total (Gatilho FECHAR)
-O encerramento imediato da posição ocorre se:
-1.  **Inversão de Regime:** O mercado muda para um estado desfavorável (ex: estava em BULL e foi para COMP, EXH ou BEAR).
-2.  **Stop Loss Atingido:** O preço cruza o valor da `Inertial Trail` (coluna STOP LOSS da tabela).
+### B. Saídas Parciais (Reduções de Risco)
 
-### C. Lógica das Saídas Parciais (Reduções)
-As reduções visam assegurar lucros e minimizar a exposição em momentos de exaustão ou perda de impulso, sem encerrar a tese principal:
+*   **Redução de 30% (Afastamento > 1 ATR - "Limite Elástico"):**
+    *   **Física:** O preço se afastou demais do seu centro de massa de inércia (`Inertial Trail`). Como uma mola esticada ao limite, a **Energia Potencial de Reversão** é máxima. O sistema está "sobrecarregado".
+    *   **Financeiro:** Realiza-se lucro na euforia (esticada) para proteger a conta contra o retorno inevitável à média (Pullback). Mantém-se 70% para capturar a continuidade da inércia.
+*   **Redução de 50% (Linha Trail FLAT por 3 barras - "Atrito Estático"):**
+    *   **Física:** A `Inertial Trail` para de se mover se o preço não renova mínimas (Long) ou máximas (Short). Se isso persiste por 3 barras, a **Velocidade** do stop zerou. Três barras é o período mínimo para confirmar que o sistema não está apenas "respirando", mas sim sofrendo **Atrito** (resistência/oferta) que anulou seu momento.
+    *   **Financeiro:** Eficiência de capital. Se a tendência parou de andar, sua margem está "presa" em um ativo sem momentum. Reduz-se 50% para liberar margem para novos ativos que acabaram de dar "Ignition".
 
-*   **Redução de 50% (Linha Trail FLAT):**
-    *   *Gatilho:* O Trailing Stop (`Inertial Trail`) permanece no mesmo valor por **3 candles consecutivos**.
-    *   *Fundamento:* Indica que o preço não está mais renovando mínimas (em Long) ou máximas (em Short). O movimento perdeu impulso direcional.
-*   **Redução de 30% (Preço Esticado):**
-    *   *Gatilho:* A distância entre o preço atual e a linha de Stop Loss é **maior que 1.0 ATR**.
-    *   *Fundamento:* O preço se afastou demais da sua base de inércia (sistema sobrecarregado). Realiza-se lucro parcial para proteção contra pullbacks violentos.
+### C. Saída Total (Gatilho FECHAR)
+*   **Entropia (Exhaustion):** Se o regime mudar para **EXHAUSTION**, o sistema entrou em caos (pavios longos e indecisão). A tese física de ordem foi destruída pela entropia.
+*   **Vetor Oposto (Stop Loss):** O preço cruzou a linha de inércia. A força contrária venceu a resistência do movimento.
 
-*Nota:* Diferente de versões anteriores, não há "tempo de carência". Se o modelo físico detectar perda de energia no candle seguinte à entrada, a redução será sugerida imediatamente para preservar o capital.
+## 3. Mapeamento das Transições de Estado
 
-## 4. Mapeamento Físico (Termodinâmica)
+| Transição | Significado Físico | Equivalente Financeiro |
+| :--- | :--- | :--- |
+| **COMP -> BULL/BEAR** | Conversão de Energia Potencial em Cinética. | **Ignition (Entrada).** O rompimento com volume de corpo. |
+| **BULL/BEAR -> COMP** | Perda de Momentum / Desaceleração. | **Acúmulo/Distribuição.** Hora de reduzir (50%) por perda de tração. |
+| **BULL/BEAR -> EXH** | Aumento de Entropia (Caos). | **Exaustão de Tendência.** Saída total por alto risco de reversão. |
+| **EXH -> COMP** | Resfriamento do Sistema. | O mercado parou de "brigar" e entrou em zona de equilíbrio. |
 
-*   **Velocidade (`body_work`):** Deslocamento líquido do preço.
-*   **Energia Cinética (`f_bull`, `f_bear`):** Impulso direcional.
-*   **Energia Potencial (`f_comp`):** Acúmulo/Compressão da mola (Range < ATR).
-*   **Entropia / Atrito (`f_exh`):** Caos e pavios excessivos (Exaustão).
-*   **Inércia (Markov EMA):** Resistência à mudança de estado.
-*   **Vetor de Movimento (`Inertial Trail`):** O ponto de Stop Loss que segue a força dominante.
-
-## 5. Gestão de Risco Estrita
-
-*   **Margem por Ativo:** 2% do saldo nominal ($4.00 para capital de $200).
-*   **Margem Total:** Máximo de 25% ($50.00) comprometidos simultaneamente.
-*   **Alavancagem:** Sugerida entre **1x e 15x** (inteiros), calculada para maximizar o lucro com base na força de Markov.
-*   **Alavancagem do Portfólio:** Monitorada para não exceder **5.0X** do capital total.
+## 4. Gestão de Posições (portfolio.json)
+O arquivo `portfolio.json` rastreia o saldo inicial de **$200.00** e aplica:
+*   **Margem/Ativo:** 2% ($4.00).
+*   **Teto de Margem:** 25% ($50.00).
+*   **Alavancagem:** Inteira (1-15x) para maximizar o lucro esperado (produto da Força Markov pela Volatilidade).
 
 ---
-*EFG - Crypto Monitor | Física de Mercado Aplicada.*
+*EFG - Crypto Monitor | Engenharia de Sistemas Financeiros.*
