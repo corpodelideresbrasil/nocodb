@@ -107,12 +107,21 @@ def main():
                     acao = "MANTER"
                     grupo = 1
 
+                # Cálculo do valor investido alvo (após a ação sugerida)
+                target_qty = active_pos['notional_usdt']
+                if acao == "FECHAR TOTAL":
+                    target_qty = 0.0
+                elif "50%" in acao:
+                    target_qty *= 0.5
+                elif "30%" in acao:
+                    target_qty *= 0.7
+
                 processed_data.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
                     'motivo': motivo,
                     'stop': stop_str, 'lev': f"{int(active_pos['leverage'])}x",
-                    'qty': f"{active_pos['notional_usdt']:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
+                    'qty': f"{target_qty:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
                     'grupo': grupo, 'strength': 1.1, 'price': last['close'],
                     'trail_stop_raw': current_trail
                 })
