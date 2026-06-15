@@ -28,7 +28,44 @@ Para que uma tendência tenha assertividade, não basta o preço se mover. É pr
 
 ---
 
-## 2. Mapeamento das Transições de Estado
+## 2. O Núcleo Matemático: Como os Estados são Calculados
+
+O modelo processa os dados em três estágios: Física Instantânea, Normalização de Markov e Identificação de Regime.
+
+### A. Estágio 1: Física Instantânea (O "Agora")
+Para cada candle, isolamos quatro vetores de força independentes:
+
+1.  **BULL & BEAR (Força Cinética):**
+    -   **Fórmula:** $F = m \cdot a$
+    -   **Massa ($m$):** Volume Normalizado ($Volume / EMA(Volume)$). Representa a inércia financeira.
+    -   **Aceleração ($a$):** Trabalho do preço ($|Fechamento - Abertura|$).
+    -   *Se Fechamento > Abertura, a força é Bull. Se for menor, é Bear.*
+
+2.  **COMP (Energia Potencial de Compressão):**
+    -   **Lógica:** Mede a "energia da mola" acumulada em ranges estreitos com volume alto.
+    -   **Fórmula:** $(ATR_{ref} - (Máxima - Mínima)) \cdot Massa$.
+    -   Se o preço não se move, mas o volume (massa) é alto, a pressão de compressão aumenta drasticamente.
+
+3.  **EXH (Entropia/Exaustão):**
+    -   **Lógica:** Perda de energia por pavios (rejeição).
+    -   **Fórmula:** Soma dos pavios superior e inferior.
+    -   *Só é ativada se os pavios forem > 2x o tamanho do corpo do candle.*
+
+### B. Estágio 2: Cadeia de Markov (A Inércia Probabilística)
+Diferente de indicadores comuns, o MPRM não olha apenas o valor absoluto, mas a **proporção da energia total**:
+
+1.  **Soma das Forças:** $Total = F_{bull} + F_{bear} + F_{comp} + F_{exh}$
+2.  **Vetor de Probabilidade Instantânea ($P_i$):** Cada estado recebe uma fatia: $P_{estado\_i} = F_{estado} / Total$.
+3.  **Suavização de Markov:** Aplicamos uma EMA de 20 períodos nesses percentuais: $P_{markov} = EMA(P_{estado\_i}, 20)$.
+    -   **Influência do Passado:** A Cadeia de Markov garante que o próximo estado dependa do atual. O candle anterior influencia o presente através da "Inércia Probabilística" carregada pela EMA.
+
+### C. Estágio 3: Identificação de Regime e Piso de Ruído
+-   **Regime Dominante:** O estado com o maior percentual no vetor de Markov define o Regime (Bull, Bear, Comp ou Exh).
+-   **Piso de Ruído (Atrito Estático):** Calculamos a média da energia total recente. Se a força Bull/Bear do candle atual não superar este piso, o sinal de ignição é bloqueado como "Ruído".
+
+---
+
+## 3. Mapeamento das Transições de Estado
 
 | Transição | Significado Físico | Equivalente no Mercado | Ação Sugerida |
 | :--- | :--- | :--- | :--- |
