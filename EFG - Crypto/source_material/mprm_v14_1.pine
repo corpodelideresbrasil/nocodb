@@ -8,21 +8,31 @@ indicator("Market Phisics Regime Model - V14.1", shorttitle="MPRM V14.1", overla
 int markov_len = input.int(20, "Sensibilidade da Inércia", minval=5, tooltip="Comprimento da suavização das probabilidades (Markov). Define a 'memória' do sistema para os regimes.")
 float sl_mult  = input.float(1.5, "Multiplicador do Stop (ATR)", minval=0.5, step=0.1, tooltip="Ajusta a distância do trailing stop.")
 
-// --- 1. MÓDULO DE FÍSICA (FOCO NO AGORA) ---
+// --- 1. MÓDULO DE FÍSICA (FOCO NO AGORA - REFINADO F=M.A) ---
+// Massa (m) = Volume Normalizado
+float vol_ema = ta.ema(volume, markov_len)
+float mass = nz(volume / vol_ema, 1.0)
+
+// Trabalho/Aceleração (a)
 float body_work = math.abs(close - open)
-float f_bull_i  = close > open ? body_work : 0.0
-float f_bear_i  = close < open ? body_work : 0.0
 
-// Compressão: Baseada na relação do range atual com a volatilidade média recente (ATR)
+// Força Aplicada (F = m * a)
+float f_bull_i  = close > open ? mass * body_work : 0.0
+float f_bear_i  = close < open ? mass * body_work : 0.0
+
+// Compressão: Energia Potencial com Massa
 float atr_ref  = ta.atr(markov_len)
-float f_comp_i = math.max(0.0, atr_ref - (high - low))
+float f_comp_i = math.max(0.0, atr_ref - (high - low)) * mass
 
-// Exaustão: Refinada para evitar excesso de sinais em ativos voláteis (como ARB).
+// Exaustão: Perda de Energia por Entropia (Pavios)
 float wicks   = (high - math.max(open, close)) + (math.min(open, close) - low)
 float f_exh_i = wicks > (body_work * 2.0) ? wicks : 0.0
 
 // Normalização das Probabilidades Instantâneas (O "Agora")
 float total_i = f_bull_i + f_bear_i + f_comp_i + f_exh_i
+
+// Piso de Ruído (Atrito Estático)
+float noise_floor = ta.ema(total_i, markov_len) * 0.5
 float p_bull_i = total_i > 0 ? f_bull_i / total_i : 0.25
 float p_bear_i = total_i > 0 ? f_bear_i / total_i : 0.25
 float p_comp_i = total_i > 0 ? f_comp_i / total_i : 0.25
@@ -58,9 +68,13 @@ var int pos_state = 0 // 0: Nenhum, 1: Comprado, -1: Vendido
 var float trail_sl = na
 float atr_sl = ta.atr(14)
 
-// Sinais de Transição
-bool enter_long  = regime == 0 and pos_state != 1
-bool enter_short = regime == 1 and pos_state != -1
+// Sinais de Transição e Filtro de Inércia (Newton)
+bool regime_change = regime != regime[1]
+float f_res = regime == 0 ? f_bull_i : regime == 1 ? f_bear_i : 0.0
+bool over_noise = f_res > noise_floor
+
+bool enter_long  = regime == 0 and regime_change and over_noise
+bool enter_short = regime == 1 and regime_change and over_noise
 bool exit_trade  = (regime == 2 or regime == 3) and pos_state != 0
 
 // Lógica de Execução e Trailing Stop
@@ -98,7 +112,7 @@ plotshape(enter_short, "Ignition Short", shape.triangledown, location.abovebar, 
 plotshape(exit_trade and not (enter_long or enter_short), "Break", shape.xcross, location.abovebar, color.new(color.gray, 50), size=size.tiny)
 
 // --- 4. HUD TABLE ---
-var table hud = table.new(position.top_right, 3, 7, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+var table hud = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
 
 if barstate.islast
     table.merge_cells(hud, 0, 0, 2, 0)
@@ -124,8 +138,12 @@ if barstate.islast
     table.cell(hud, 1, 5, str.tostring(p_exh_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
     table.cell(hud, 2, 5, str.tostring(p_exh * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
 
-    table.merge_cells(hud, 0, 6, 2, 6)
-    table.cell(hud, 0, 6, "PURE MARKOV PHYSICS (NO PAST)", text_color=color.gray, text_size=size.tiny)
+    table.cell(hud, 0, 6, "MASSA", text_color=color.gray, text_size=size.small)
+    table.merge_cells(hud, 1, 6, 2, 6)
+    table.cell(hud, 1, 6, str.tostring(mass, "#.00") + " (Vol/EMA)", text_color=color.white, text_size=size.small)
+
+    table.merge_cells(hud, 0, 7, 2, 7)
+    table.cell(hud, 0, 7, "PURE MARKOV PHYSICS (F=M.A)", text_color=color.gray, text_size=size.tiny)
 
 // Alertas
 alertcondition(enter_long, "MPE: Ignition LONG", "Bull mode ON")
