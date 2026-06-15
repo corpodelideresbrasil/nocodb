@@ -15,17 +15,18 @@ def load_assets(filepath):
     return symbols
 
 def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
-    """Função centralizada para imprimir a tabela de ativos e o resumo com coluna de MOTIVO."""
+    """Função centralizada para imprimir a tabela de ativos e o resumo com coluna de MOTIVO e SYNC."""
     if not table_data:
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    col_width = 141
+    # Ajuste para incluir coluna SYNC (4h)
+    col_width = 153
     print("\n" + "="*col_width)
     print(f" {title} ")
     print("="*col_width)
 
-    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME':<8} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<18} | {'STOP LOSS':<12} | {'LEV':<4} | {'VALOR (USDT)':<15}"
+    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME (1D)':<11} | {'SYNC (4h)':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<18} | {'STOP LOSS':<12} | {'VALOR (USDT)':<15}"
 
     print(header)
     print("-" * col_width)
@@ -33,7 +34,8 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
     for row in table_data:
         acao = row.get('acao', '---')
         motivo = row.get('motivo', '---')
-        line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<8} | {row['dir']:<6} | {acao:<16} | {motivo:<18} | {row['stop']:<12} | {row['lev']:<4} | {row['qty']:<15}"
+        sync = row.get('sync', '---')
+        line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<11} | {sync:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<18} | {row['stop']:<12} | {row['qty']:<15}"
         print(line)
 
     print("-" * col_width)
@@ -62,21 +64,35 @@ def main():
 
     for symbol in symbols:
         try:
-            df = provider.fetch_ohlcv(symbol, limit=100)
-            if df is None or df.empty: continue
+            # 1. TIMEFRAME PRINCIPAL (1 DIARIO)
+            df_1d = provider.fetch_ohlcv(symbol, timeframe='1d', limit=100)
+            if df_1d is None or df_1d.empty: continue
 
-            df = calc.calculate_physics(df)
-            df = calc.calculate_markov(df)
-            df = calc.identify_regime(df)
+            df_1d = calc.calculate_physics(df_1d)
+            df_1d = calc.calculate_markov(df_1d)
+            df_1d = calc.identify_regime(df_1d)
+
+            # 2. TIMEFRAME DE AJUSTE/PULLBACK (4 HORAS)
+            df_4h = provider.fetch_ohlcv(symbol, timeframe='4h', limit=100)
+            sync_str = "???"
+            if df_4h is not None and not df_4h.empty:
+                df_4h = calc.calculate_physics(df_4h)
+                df_4h = calc.calculate_markov(df_4h)
+                df_4h = calc.identify_regime(df_4h)
+                last_4h = df_4h.iloc[-1]
+                sync_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last_4h['regime'], "???")
 
             active_pos = portfolio.positions.get(symbol)
             engine = MPRMEngine(sl_mult=1.5, active_position=active_pos)
-            decision = engine.process_signals(df)
+            decision = engine.process_signals(df_1d)
 
-            last = df.iloc[-1]
+            last = df_1d.iloc[-1]
             strength = last['p_bull'] if last['regime'] == 0 else last['p_bear']
             side = "LONG" if last['regime'] == 0 else "SHORT" if last['regime'] == 1 else "NONE"
             regime_str = {0: "BULL", 1: "BEAR", 2: "COMP", 3: "EXH"}.get(last['regime'], "???")
+
+            # Verificação de Alinhamento (Sync)
+            is_synced = (last['regime'] == last_4h['regime']) if df_4h is not None else False
 
             stop_val = decision.get('trail_stop')
             stop_str = f"{stop_val:.4f}" if stop_val and not np.isnan(stop_val) else "---"
@@ -118,7 +134,7 @@ def main():
 
                 processed_data.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
-                    'ticker': symbol, 'regime': regime_str, 'dir': active_pos['side'], 'acao': acao,
+                    'ticker': symbol, 'regime': regime_str, 'sync': sync_str, 'dir': active_pos['side'], 'acao': acao,
                     'motivo': motivo,
                     'stop': stop_str, 'lev': f"{int(active_pos['leverage'])}x",
                     'qty': f"{target_qty:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
@@ -126,22 +142,28 @@ def main():
                     'trail_stop_raw': current_trail
                 })
             elif decision['ignition_long'] or decision['ignition_short']:
-                # CRITÉRIO DE ENTRADA TEÓRICO:
-                # 1. Força de Markov >= 35% (vencendo a probabilidade neutra de 25%)
-                # 2. Estado Dinâmico == EXPANSION (alinhamento de momento)
+                # CRITÉRIO DE ENTRADA TEÓRICO (V14.1 + MTF SYNC):
+                # 1. Força de Markov >= 35%
+                # 2. Estado Dinâmico == EXPANSION
+                # 3. Alinhamento 1D/4H (Sync) para evitar pullback adverso
                 if strength >= 0.35 and last['dynamic_state'] == "EXPANSION":
+                    acao, grupo, motivo = "ENTRAR", 3, "MARKOV >= 35%"
+
+                    if not is_synced:
+                        acao, grupo, motivo = "ESPERAR 4H", 4, "PULLBACK (SEM SYNC)"
+
                     lev = portfolio.calculate_suggested_leverage(strength)
                     margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
 
                     if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
                         processed_data.append({
                             'rank': f"{strength*100:4.1f}%",
-                            'ticker': symbol, 'regime': regime_str, 'dir': side, 'acao': "ENTRAR",
-                            'motivo': "MARKOV >= 35%",
+                            'ticker': symbol, 'regime': regime_str, 'sync': sync_str, 'dir': side, 'acao': acao,
+                            'motivo': motivo,
                             'stop': stop_str, 'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
-                            'idade': "FRESH", 'grupo': 3, 'strength': strength, 'price': last['close']
+                            'idade': "FRESH", 'grupo': grupo, 'strength': strength, 'price': last['close']
                         })
-                        virtual_margin_pool += margin_needed
+                        if acao == "ENTRAR": virtual_margin_pool += margin_needed
         except Exception: continue
 
     processed_data.sort(key=lambda x: (x['grupo'], -x['strength']))
