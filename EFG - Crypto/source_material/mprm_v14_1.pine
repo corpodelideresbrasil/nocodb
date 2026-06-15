@@ -1,0 +1,151 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © raulfernandoferreira
+
+//@version=6
+indicator("Market Phisics Regime Model - V14.1", shorttitle="MPRM V14.1", overlay=true, max_bars_back=5000)
+
+// --- 0. CONFIGURAÇÕES ---
+int markov_len = input.int(20, "Sensibilidade da Inércia", minval=5, tooltip="Comprimento da suavização das probabilidades (Markov). Define a 'memória' do sistema para os regimes.")
+float sl_mult  = input.float(1.5, "Multiplicador do Stop (ATR)", minval=0.5, step=0.1, tooltip="Ajusta a distância do trailing stop.")
+
+// --- 1. MÓDULO DE FÍSICA (FOCO NO AGORA - REFINADO F=M.A) ---
+// Massa (m) = Volume Normalizado
+float vol_ema = ta.ema(volume, markov_len)
+float mass = nz(volume / vol_ema, 1.0)
+
+// Trabalho/Aceleração (a)
+float body_work = math.abs(close - open)
+
+// Força Aplicada (F = m * a)
+float f_bull_i  = close > open ? mass * body_work : 0.0
+float f_bear_i  = close < open ? mass * body_work : 0.0
+
+// Compressão: Energia Potencial com Massa
+float atr_ref  = ta.atr(markov_len)
+float f_comp_i = math.max(0.0, atr_ref - (high - low)) * mass
+
+// Exaustão: Perda de Energia por Entropia (Pavios)
+float wicks   = (high - math.max(open, close)) + (math.min(open, close) - low)
+float f_exh_i = wicks > (body_work * 2.0) ? wicks : 0.0
+
+// Normalização das Probabilidades Instantâneas (O "Agora")
+float total_i = f_bull_i + f_bear_i + f_comp_i + f_exh_i
+
+// Piso de Ruído (Atrito Estático)
+float noise_floor = ta.ema(total_i, markov_len) * 0.5
+float p_bull_i = total_i > 0 ? f_bull_i / total_i : 0.25
+float p_bear_i = total_i > 0 ? f_bear_i / total_i : 0.25
+float p_comp_i = total_i > 0 ? f_comp_i / total_i : 0.25
+float p_exh_i  = total_i > 0 ? f_exh_i  / total_i : 0.25
+
+// --- 2. CADEIA DE MARKOV (SUAVIZAÇÃO DE ESTADOS) ---
+float p_bull = ta.ema(p_bull_i, markov_len)
+float p_bear = ta.ema(p_bear_i, markov_len)
+float p_comp = ta.ema(p_comp_i, markov_len)
+float p_exh  = ta.ema(p_exh_i,  markov_len)
+
+float _sum = p_bull + p_bear + p_comp + p_exh
+p_bull := nz(p_bull / (_sum <= 0 ? 1 : _sum), 0.25)
+p_bear := nz(p_bear / (_sum <= 0 ? 1 : _sum), 0.25)
+p_comp := nz(p_comp / (_sum <= 0 ? 1 : _sum), 0.25)
+p_exh  := nz(p_exh  / (_sum <= 0 ? 1 : _sum), 0.25)
+
+// --- 3. REGIME & GESTÃO DE POSIÇÃO ---
+float max_p = math.max(p_bull, p_bear, p_comp, p_exh)
+int regime = max_p == p_bull ? 0 : max_p == p_bear ? 1 : max_p == p_comp ? 2 : 3
+color regime_col = regime == 0 ? color.green : regime == 1 ? color.red : regime == 2 ? color.blue : color.orange
+
+// NOVO: Estado Dinâmico Markoviano (Market Dynamic)
+// Substitui o Hurst por uma análise de forças atual (Tendência vs Equilíbrio)
+float trend_energy = p_bull + p_bear
+float equilibrium_energy = p_comp + p_exh
+string dynamic_state = trend_energy > equilibrium_energy ? "EXPANSION" : p_comp > p_exh ? "CONTRACTION" : "EXHAUSTION"
+color state_col = dynamic_state == "EXPANSION" ? color.green : dynamic_state == "CONTRACTION" ? color.blue : color.orange
+
+barcolor(color.new(regime_col, 50))
+
+var int pos_state = 0 // 0: Nenhum, 1: Comprado, -1: Vendido
+var float trail_sl = na
+float atr_sl = ta.atr(14)
+
+// Sinais de Transição e Filtro de Inércia (Newton)
+bool regime_change = regime != regime[1]
+float f_res = regime == 0 ? f_bull_i : regime == 1 ? f_bear_i : 0.0
+bool over_noise = f_res > noise_floor
+
+bool enter_long  = regime == 0 and regime_change and over_noise
+bool enter_short = regime == 1 and regime_change and over_noise
+bool exit_trade  = (regime == 2 or regime == 3) and pos_state != 0
+
+// Lógica de Execução e Trailing Stop
+if enter_long
+    pos_state := 1
+    trail_sl := low - (atr_sl * sl_mult)
+else if enter_short
+    pos_state := -1
+    trail_sl := high + (atr_sl * sl_mult)
+else if exit_trade
+    pos_state := 0
+    trail_sl := na
+
+// Ajuste Dinâmico (Ratcheting)
+if pos_state == 1
+    float current_sl = low - (atr_sl * sl_mult)
+    trail_sl := math.max(nz(trail_sl, 0), current_sl)
+    if close < trail_sl
+        pos_state := 0
+        trail_sl := na
+else if pos_state == -1
+    float current_sl = high + (atr_sl * sl_mult)
+    trail_sl := math.min(nz(trail_sl, 1e10), current_sl)
+    if close > trail_sl
+        pos_state := 0
+        trail_sl := na
+
+// Plotagem da Linha de Inércia (Corrigida para não "emendar")
+plot(pos_state == 1  ? trail_sl : na, "Long Trail",  color=color.green, linewidth=2, style=plot.style_linebr)
+plot(pos_state == -1 ? trail_sl : na, "Short Trail", color=color.red,   linewidth=2, style=plot.style_linebr)
+
+// Sinais Visuais (Minimalistas)
+plotshape(enter_long, "Ignition Long", shape.triangleup, location.belowbar, color.green, size=size.small, text="⚡", textcolor=color.green)
+plotshape(enter_short, "Ignition Short", shape.triangledown, location.abovebar, color.red, size=size.small, text="🔥", textcolor=color.red)
+plotshape(exit_trade and not (enter_long or enter_short), "Break", shape.xcross, location.abovebar, color.new(color.gray, 50), size=size.tiny)
+
+// --- 4. HUD TABLE ---
+var table hud = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.merge_cells(hud, 0, 0, 2, 0)
+    table.cell(hud, 0, 0, syminfo.ticker + " V14.1 | STATE: " + dynamic_state, text_color=state_col, text_size=size.small)
+
+    table.cell(hud, 0, 1, "FORÇA", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 1, "AGORA", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 2, 1, "MARKOV", text_color=color.gray, text_size=size.small)
+
+    table.cell(hud, 0, 2, "BULL", text_color=color.green, text_size=size.small)
+    table.cell(hud, 1, 2, str.tostring(p_bull_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 2, str.tostring(p_bull * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 3, "BEAR", text_color=color.red, text_size=size.small)
+    table.cell(hud, 1, 3, str.tostring(p_bear_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 3, str.tostring(p_bear * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 4, "COMP", text_color=color.blue, text_size=size.small)
+    table.cell(hud, 1, 4, str.tostring(p_comp_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 4, str.tostring(p_comp * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 5, "EXH", text_color=color.orange, text_size=size.small)
+    table.cell(hud, 1, 5, str.tostring(p_exh_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 5, str.tostring(p_exh * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 6, "MASSA", text_color=color.gray, text_size=size.small)
+    table.merge_cells(hud, 1, 6, 2, 6)
+    table.cell(hud, 1, 6, str.tostring(mass, "#.00") + " (Vol/EMA)", text_color=color.white, text_size=size.small)
+
+    table.merge_cells(hud, 0, 7, 2, 7)
+    table.cell(hud, 0, 7, "PURE MARKOV PHYSICS (F=M.A)", text_color=color.gray, text_size=size.tiny)
+
+// Alertas
+alertcondition(enter_long, "MPE: Ignition LONG", "Bull mode ON")
+alertcondition(enter_short, "MPE: Ignition SHORT", "Bear mode ON")
+alertcondition(exit_trade, "MPE: Break", "Exit signal")
