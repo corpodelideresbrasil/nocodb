@@ -63,10 +63,16 @@ class MPRMEngine:
             df.at[df.index[i], 'flat_count'] = flat_counter
 
         last = df.iloc[-1]
-        # Gatilhos de Ignição: Baseados puramente na mudança de estado (regime_age == 0)
+        # Gatilhos de Ignição: Baseados na mudança de estado E no rompimento do atrito (F > Noise)
+        # Força Resultante do Movimento
+        f_res = last['f_bull_i'] if last['regime'] == 0 else last['f_bear_i'] if last['regime'] == 1 else 0.0
+
+        # Filtro de Inércia: Só ignifica se a Força > Piso de Ruído (Atrito Estático)
+        over_noise = f_res > last['noise_floor']
+
         decision = {
-            'ignition_long': last['regime'] == 0 and last['regime_age'] == 0,
-            'ignition_short': last['regime'] == 1 and last['regime_age'] == 0,
+            'ignition_long': last['regime'] == 0 and last['regime_age'] == 0 and over_noise,
+            'ignition_short': last['regime'] == 1 and last['regime_age'] == 0 and over_noise,
             'trail_stop': last['trail_stop'],
             'flat_count': last['flat_count'],
             'regime_age': last['regime_age'],

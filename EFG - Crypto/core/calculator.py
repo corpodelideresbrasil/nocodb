@@ -26,18 +26,28 @@ class MPRMCalculator:
 
     def calculate_physics(self, df):
         """
-        Calcula as forças físicas instantâneas (Módulo 1 do Manual).
+        Calcula as forças físicas baseadas em F=m.a (Módulo 1 - Refinado).
+        - Massa (m) = Volume Normalizado
+        - Aceleração (a) = Trabalho do Preço (Body Work)
         """
-        # Trabalho do Corpo (Body Work)
+        # Massa (m): Volume relativo à média (Inércia)
+        df['vol_ema'] = self._ema(df['volume'], self.markov_len)
+        df['mass'] = (df['volume'] / df['vol_ema']).replace([np.inf, -np.inf], 1.0).fillna(1.0)
+
+        # Trabalho/Aceleração (a)
         df['body_work'] = np.abs(df['close'] - df['open'])
 
-        # Forças Bull e Bear
-        df['f_bull_i'] = np.where(df['close'] > df['open'], df['body_work'], 0.0)
-        df['f_bear_i'] = np.where(df['close'] < df['open'], df['body_work'], 0.0)
+        # Força Aplicada (F = m * a)
+        # Se a massa for baixa (volume baixo), mesmo um movimento grande tem pouca força.
+        # Se a massa for alta, pequenos movimentos carregam muita energia cinética.
+        df['f_bull_i'] = np.where(df['close'] > df['open'], df['mass'] * df['body_work'], 0.0)
+        df['f_bear_i'] = np.where(df['close'] < df['open'], df['mass'] * df['body_work'], 0.0)
 
-        # Compressão (Referenciada ao ATR recente)
+        # Compressão (Referenciada ao ATR recente) - "Energia Potencial Elástica"
         df['atr_ref'] = self._atr(df, self.markov_len)
         df['f_comp_i'] = (df['atr_ref'] - (df['high'] - df['low'])).clip(lower=0.0)
+        # Aplicamos massa à compressão: compressão com alto volume = mola muito tensionada
+        df['f_comp_i'] = df['f_comp_i'] * df['mass']
 
         # Exaustão (Wicks vs Body)
         df['wicks'] = (df['high'] - df[['open', 'close']].max(axis=1)) + \
@@ -50,6 +60,10 @@ class MPRMCalculator:
         # Probabilidades Instantâneas
         for col in ['bull', 'bear', 'comp', 'exh']:
             df[f'p_{col}_i'] = np.where(df['total_i'] > 0, df[f'f_{col}_i'] / df['total_i'], 0.25)
+
+        # Atrito Estático/Ruído: Média da volatilidade das energias
+        # Define o nível de força necessária para "romper o ruído"
+        df['noise_floor'] = self._ema(df['total_i'], self.markov_len) * 0.5
 
         return df
 
