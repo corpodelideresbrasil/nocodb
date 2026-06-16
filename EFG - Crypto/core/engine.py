@@ -27,8 +27,9 @@ class MPRMEngine:
         df = df.copy()
         df['atr_sl'] = self._atr(df, 14)
 
-        # Identificação de Mudança de Regime
-        regime_change = df['regime'] != df['regime'].shift()
+        # Identificação de Mudança de Regime e Transição
+        df['prev_regime'] = df['regime'].shift()
+        regime_change = df['regime'] != df['prev_regime']
         df['regime_age'] = regime_change.cumsum().groupby(regime_change.cumsum()).cumcount()
 
         df['trail_stop'] = np.nan
@@ -63,39 +64,46 @@ class MPRMEngine:
             df.at[df.index[i], 'flat_count'] = flat_counter
 
         last = df.iloc[-1]
-        # Gatilhos de Ignição: Baseados na mudança de estado E no rompimento do atrito (F > Noise)
-        # Força Resultante do Movimento
+        # Gatilhos de Ignição V14.2: Baseados na Transição e Força
+        # Estados: 0: BULL, 1: BEAR, 2: COMP, 3: EXH
         f_res = last['f_bull_i'] if last['regime'] == 0 else last['f_bear_i'] if last['regime'] == 1 else 0.0
-
-        # Filtro de Inércia: Só ignifica se a Força > Piso de Ruído (Atrito Estático)
         over_noise = f_res > last['noise_floor']
 
+        # Regras de Entrada (Transições Permitidas)
+        # Permite Ignition se entrar em BULL/BEAR vindo de COMP ou se mantendo em BULL/BEAR (Inércia)
+        # Bloqueia se vier de EXH ou estiver em EXH/COMP
+        valid_transition = False
+        if last['regime'] in [0, 1]:
+            if last['prev_regime'] in [0, 1, 2] and last['prev_regime'] != 3:
+                valid_transition = True
+
         decision = {
-            'ignition_long': last['regime'] == 0 and last['regime_age'] == 0 and over_noise,
-            'ignition_short': last['regime'] == 1 and last['regime_age'] == 0 and over_noise,
+            'ignition_long': last['regime'] == 0 and valid_transition and over_noise and last['regime_age'] <= 10,
+            'ignition_short': last['regime'] == 1 and valid_transition and over_noise and last['regime_age'] <= 10,
             'trail_stop': last['trail_stop'],
             'flat_count': last['flat_count'],
             'regime_age': last['regime_age'],
             'signal_status': "FRESH" if last['regime_age'] <= 10 else "ALERT" if last['regime_age'] <= 20 else "EXPIRED"
         }
 
-        # Lógica de Saída Amestral (Sem olhar para data de abertura da posição)
+        # Lógica de Gestão de Posição (Transições V14.2)
         if self.active_position:
             price, atr, trail = last['close'], last['atr_sl'], last['trail_stop']
+            side = self.active_position['side']
 
-            # 1. Saída Total (Regime desfavorável ou Stop Loss atingido)
-            decision['exit_total'] = last['regime'] in [2, 3]
+            # 1. Saída Total: Regime EXH ou Inversão Total (BULL <-> BEAR) ou Stop Loss
+            decision['exit_total'] = (last['regime'] == 3) # EXH = Sair sempre
 
-            if self.active_position['side'] == 'LONG':
-                if (trail and price < trail) or last['regime'] == 1:
-                    decision['exit_total'] = True
-            elif self.active_position['side'] == 'SHORT':
-                if (trail and price > trail) or last['regime'] == 0:
-                    decision['exit_total'] = True
+            if side == 'LONG':
+                if last['regime'] == 1 or (trail and price < trail): decision['exit_total'] = True
+            else: # SHORT
+                if last['regime'] == 0 or (trail and price > trail): decision['exit_total'] = True
 
-            # 2. Saídas Parciais (Baseadas puramente na energia e rastro atual)
-            # Regra: Flat Trail por 3 barras ou Distância > 1 ATR
-            decision['exit_50_flat'] = last['flat_count'] >= 3
+            # 2. Redução 50%: Transição para COMP ou Trail Flat
+            # BULL -> COMP ou BEAR -> COMP = Desaceleração
+            decision['exit_50_flat'] = (last['flat_count'] >= 3) or (last['regime'] == 2)
+
+            # 3. Redução 30%: Preço Esticado
             decision['exit_30_stretch'] = trail and abs(price - trail) > atr
 
         return decision

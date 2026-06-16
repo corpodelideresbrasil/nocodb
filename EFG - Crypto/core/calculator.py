@@ -83,21 +83,34 @@ class MPRMCalculator:
 
         return df
 
-    def identify_regime(self, df):
+    def identify_regime(self, df, h_threshold=0.05):
         """
-        Identifica o Regime e o Estado Dinâmico (Módulo 3 do Manual).
+        Identifica o Regime com Histerese e o Estado Dinâmico (V14.2).
+        Histerese: Evita 'flickering' de estados quando as probabilidades estão próximas.
         """
-        # Regime Dominante
-        df['max_p'] = df[['p_bull', 'p_bear', 'p_comp', 'p_exh']].max(axis=1)
+        regimes = []
+        # Inicializa com o estado de maior probabilidade no primeiro candle
+        first_probs = df[['p_bull', 'p_bear', 'p_comp', 'p_exh']].iloc[0].values
+        current_regime = np.argmax(first_probs)
 
-        conditions = [
-            (df['max_p'] == df['p_bull']),
-            (df['max_p'] == df['p_bear']),
-            (df['max_p'] == df['p_comp']),
-            (df['max_p'] == df['p_exh'])
-        ]
-        choices = [0, 1, 2, 3] # BULL, BEAR, COMP, EXH
-        df['regime'] = np.select(conditions, choices, default=3)
+        p_cols = ['p_bull', 'p_bear', 'p_comp', 'p_exh']
+        probs_matrix = df[p_cols].values
+
+        for i in range(len(df)):
+            probs = probs_matrix[i]
+            p_curr = probs[current_regime]
+            max_idx = np.argmax(probs)
+            p_max = probs[max_idx]
+
+            # Lógica de Histerese (Termostato):
+            # Só muda se o novo estado vencer o atual por uma margem (h_threshold)
+            # OU se o estado atual cair abaixo do Piso de Ruído (0.25 em sistema de 4 estados)
+            if (p_max > p_curr + h_threshold) or (p_curr < 0.25):
+                current_regime = max_idx
+
+            regimes.append(current_regime)
+
+        df['regime'] = regimes
 
         # Estado Dinâmico (Expansion, Contraction, Exhaustion)
         df['trend_energy'] = df['p_bull'] + df['p_bear']

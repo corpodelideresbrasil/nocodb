@@ -12,13 +12,13 @@ Para que uma tendência tenha assertividade, não basta o preço se mover. É pr
 *   **Aceleração (a):** É o **Trabalho do Preço** (corpo do candle).
 *   **Força (F):** A força resultante é o produto do Volume pelo Deslocamento. Movimentos com baixo volume são considerados "sem massa" e, portanto, incapazes de vencer o atrito do mercado.
 
-### B. O Critério de 35% e o Piso de Ruído (Atrito Estático)
-*   **O Racional Matemático:** Em um sistema com 4 estados possíveis (Bull, Bear, Comp, Exh), a probabilidade de "ruído puro" (aleatoriedade) para qualquer estado é de **25%**.
-*   **O Gatilho Físico:** Para que um movimento seja considerado uma "Ignition" (Ignição), a energia direcional deve superar o ruído. Adotamos **35%** porque isso representa um **excesso de 40% de energia** sobre a base neutra (25% + 10%).
-*   **Filtro de Atrito:** Além dos 35%, o sistema agora exige que a **Força (F)** seja superior ao **Piso de Ruído** (média das energias recentes). Isso filtra ativos que estão "andando de lado" ou sem volatilidade, garantindo que só entramos quando há energia real para romper a inércia.
-*   **Vantagem Financeira:** No tempo gráfico de 1D, esperar a força atingir 40% ou 45% frequentemente resulta em "comprar o topo do primeiro impulso". Os 35% capturam a **aceleração inicial** (o momento em que a força rompe a inércia do repouso), maximizando o lucro esperado.
+### B. O Critério de 35%, Piso de Ruído e Histerese
+*   **O Racional Matemático:** Em um sistema com 4 estados possíveis, a probabilidade de "ruído puro" é de **25%**.
+*   **O Gatilho Físico:** Adotamos **35%** porque representa um excesso de energia sobre a base neutra.
+*   **Filtro de Atrito:** Exige que a **Força (F)** supere o **Piso de Ruído** (Atrito Estático).
+*   **Histerese (V14.2):** Para evitar que o sistema mude de regime por variações mínimas (flickering), implementamos uma margem de **5%**. O novo estado deve vencer o atual por essa margem, ou o atual deve cair abaixo do nível de ruído (25%), para que a mudança ocorra. É o "termostato" do sistema.
 
-### B. Redução de 30% (Afastamento > 1 ATR — "Limite Elástico")
+### C. Redução de 30% (Afastamento > 1 ATR — "Limite Elástico")
 *   **Por que 30%?** Com uma alavancagem média de 10x, um afastamento de 1 ATR do Stop Loss gera um lucro latente onde a realização de **30% da posição** cobre o risco total do capital inicialmente empenhado na operação. É o "Break-even Matemático".
 *   **A Física:** Imagine o preço ligado ao stop por um elástico. Acima de 1 ATR, o sistema atingiu seu **Limite Elástico**. A energia potencial de reversão (contratendência) supera a energia cinética atual. Realizamos 30% para converter o "calor" do mercado em saldo, mantendo 70% para seguir a inércia se o elástico não romper.
 
@@ -47,17 +47,16 @@ Para cada candle, isolamos quatro vetores de força independentes:
     -   Se o preço não se move, mas o volume (massa) é alto, a pressão de compressão aumenta drasticamente.
 
 3.  **EXH (Entropia/Exaustão):**
-    -   **Lógica:** Perda de energia por pavios (rejeição).
-    -   **Fórmula:** Soma dos pavios superior e inferior.
-    -   *Só é ativada se os pavios forem > 2x o tamanho do corpo do candle.*
+    -   **Lógica:** Perda de energia por pavios (rejeição). Representa o caos.
+    -   **Transição COMP -> EXH:** Significa a dissipação da energia potencial acumulada em briga desordenada (pavios) em vez de movimento direcional. É a "mola que quebrou".
 
-### B. Estágio 2: Cadeia de Markov (A Inércia Probabilística)
-Diferente de indicadores comuns, o MPRM não olha apenas o valor absoluto, mas a **proporção da energia total**:
+### B. Cadeia de Markov e Inércia (Filtragem de Memória)
+Diferente de indicadores comuns, o MPRM opera na proporção da energia total:
 
 1.  **Soma das Forças:** $Total = F_{bull} + F_{bear} + F_{comp} + F_{exh}$
-2.  **Vetor de Probabilidade Instantânea ($P_i$):** Cada estado recebe uma fatia: $P_{estado\_i} = F_{estado} / Total$.
-3.  **Suavização de Markov:** Aplicamos uma EMA de 20 períodos nesses percentuais: $P_{markov} = EMA(P_{estado\_i}, 20)$.
-    -   **Influência do Passado:** A Cadeia de Markov garante que o próximo estado dependa do atual. O candle anterior influencia o presente através da "Inércia Probabilística" carregada pela EMA.
+2.  **Vetor de Probabilidade Instantânea ($P_i$):** A energia bruta do "Agora".
+3.  **Inércia (Markov):** Aplicamos uma EMA de 20 períodos ($markov\_len$).
+    -   **O que significa:** A inércia define por quanto tempo um movimento tende a persistir. No 1D, uma inércia de 20 candles significa que o "peso" da tendência atual ancora as decisões por cerca de 20 dias, filtrando ruídos intradiários.
 
 ### C. Estágio 3: Identificação de Regime e Piso de Ruído
 -   **Regime Dominante:** O estado com o maior percentual no vetor de Markov define o Regime (Bull, Bear, Comp ou Exh).
@@ -65,15 +64,18 @@ Diferente de indicadores comuns, o MPRM não olha apenas o valor absoluto, mas a
 
 ---
 
-## 3. Mapeamento das Transições de Estado
+## 3. Mapeamento das Transições de Estado (V14.2)
 
-| Transição | Significado Físico | Equivalente no Mercado | Ação Sugerida |
-| :--- | :--- | :--- | :--- |
-| **COMP -> BULL/BEAR** | Conversão de E. Potencial em Cinética. | **Ignition.** Rompimento com volume de corpo. | **ENTRAR** |
-| **BULL/BEAR -> COMP** | Desaceleração / Aumento de Atrito. | **Acúmulo ou Distribuição.** O preço parou de andar. | **REDUZIR 50%** |
-| **BULL/BEAR -> EXH** | Aumento crítico de Entropia (Caos). | **Exaustão de Tendência.** Pavios longos e briga. | **FECHAR** |
-| **EXH -> COMP** | Equilíbrio Térmico. | O mercado cansou de brigar e entrou em repouso lateral. | **AGUARDAR** |
-| **BULL <-> BEAR** | Inversão de Vetor de Força. | Mudança total de mão. A tese original morreu. | **FECHAR** |
+O sistema agora analisa a transição do estado anterior ($T-1$) para o atual ($T$):
+
+| Transição | Contexto Físico | Decisão de Trade |
+| :--- | :--- | :--- |
+| **BULL -> BULL** | Inércia mantida. | **ENTRAR / MANTER** |
+| **COMP -> BULL** | Ignição (Explosão). | **ENTRAR** |
+| **BULL -> COMP** | Desaceleração (Atrito). | **REDUZIR 50%** |
+| **ANY -> EXH** | Caos / Dissipação. | **FECHAR (TOTAL)** |
+| **EXH -> ANY** | Reorganização. | **AGUARDAR (SEM SYNC)** |
+| **BULL <-> BEAR** | Inversão de Vetor. | **FECHAR / REVERTER** |
 
 ---
 
