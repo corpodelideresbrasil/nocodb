@@ -85,7 +85,7 @@ bool enter_long  = (regime == 0) and valid_entry and over_noise and regime_age <
 bool enter_short = (regime == 1) and valid_entry and over_noise and regime_age <= 10 and pos_state >= 0
 
 // Regras de Saída Total
-bool exit_trade = (regime == 3) or (pos_state == 1 and regime == 1) or (pos_state == -1 and regime == 0)
+bool exit_trade = (pos_state != 0) and ((regime == 3) or (pos_state == 1 and regime == 1) or (pos_state == -1 and regime == 0))
 
 // Lógica de Execução e Trailing Stop
 float atr_val = nz(atr_sl, ta.atr(14))
@@ -135,7 +135,7 @@ plot(pos_state == -1 ? trail_sl : na, "Short Trail", color=color.red,   linewidt
 // Sinais Visuais (Minimalistas)
 plotshape(enter_long, "Ignition Long", shape.triangleup, location.belowbar, color.green, size=size.small, text="⚡", textcolor=color.green)
 plotshape(enter_short, "Ignition Short", shape.triangledown, location.abovebar, color.red, size=size.small, text="🔥", textcolor=color.red)
-plotshape(exit_trade and not (enter_long or enter_short), "Break", shape.xcross, location.abovebar, color.new(color.gray, 50), size=size.tiny)
+plotshape(exit_trade and not (enter_long or enter_short), "Break", shape.xcross, location.abovebar, color.new(color.gray, 80), size=size.tiny)
 
 // Visualização de Reduções
 plotshape(reduce_50 and not reduce_50[1], "Reduzir 50%", shape.labeldown, location.abovebar, color.orange, size=size.tiny, text="50%", textcolor=color.white)
@@ -157,23 +157,23 @@ if barstate.islast
     table.cell(hud, 0, 0, syminfo.ticker + " V15.0 | STATE: " + dynamic_state, text_color=state_col, text_size=size.small)
 
     table.cell(hud, 0, 1, "FORÇA", text_color=color.gray, text_size=size.small)
-    table.cell(hud, 1, 1, "AGORA", text_color=color.gray, text_size=size.small)
-    table.cell(hud, 2, 1, "TRANS.", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 1, "PROB.", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 2, 1, "STATUS", text_color=color.gray, text_size=size.small)
 
     table.cell(hud, 0, 2, "BULL", text_color=color.green, text_size=size.small)
-    table.cell(hud, 1, 2, str.tostring(p_bull_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 2, str.tostring(p_bull_i * 100, "0.0") + "%", text_color=color.white, text_size=size.small)
     table.cell(hud, 2, 2, regime == 0 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 3, "BEAR", text_color=color.red, text_size=size.small)
-    table.cell(hud, 1, 3, str.tostring(p_bear_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 3, str.tostring(p_bear_i * 100, "0.0") + "%", text_color=color.white, text_size=size.small)
     table.cell(hud, 2, 3, regime == 1 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 4, "COMP", text_color=color.blue, text_size=size.small)
-    table.cell(hud, 1, 4, str.tostring(p_comp_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 4, str.tostring(p_comp_i * 100, "0.0") + "%", text_color=color.white, text_size=size.small)
     table.cell(hud, 2, 4, regime == 2 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 5, "EXH", text_color=color.orange, text_size=size.small)
-    table.cell(hud, 1, 5, str.tostring(p_exh_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 5, str.tostring(p_exh_i * 100, "0.0") + "%", text_color=color.white, text_size=size.small)
     table.cell(hud, 2, 5, regime == 3 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 6, "MASSA", text_color=color.gray, text_size=size.small)
