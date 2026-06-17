@@ -56,8 +56,7 @@ if (max_p_val > p_curr + h_threshold) or (p_curr < 0.25)
     regime := max_p_idx
 color regime_col = regime == 0 ? color.green : regime == 1 ? color.red : regime == 2 ? color.blue : color.orange
 
-// NOVO: Estado Dinâmico Markoviano (Market Dynamic)
-// Substitui o Hurst por uma análise de forças atual (Tendência vs Equilíbrio)
+// Estado Dinâmico Markoviano
 float trend_energy = p_bull + p_bear
 float equilibrium_energy = p_comp + p_exh
 string dynamic_state = trend_energy > equilibrium_energy ? "EXPANSION" : p_comp > p_exh ? "CONTRACTION" : "EXHAUSTION"
@@ -92,21 +91,35 @@ else if exit_trade
     pos_state := 0
     trail_sl := na
 
-// Ajuste Dinâmico (Ratcheting)
-if pos_state == 1
-    float current_sl = low - (atr_sl * sl_mult)
-    trail_sl := math.max(nz(trail_sl, 0), current_sl)
-    if close < trail_sl
-        pos_state := 0
-        trail_sl := na
-else if pos_state == -1
-    float current_sl = high + (atr_sl * sl_mult)
-    trail_sl := math.min(nz(trail_sl, 1e10), current_sl)
-    if close > trail_sl
-        pos_state := 0
-        trail_sl := na
+// Ajuste Dinâmico (Ratcheting) e Flat Count
+var int flat_count = 0
+if pos_state != 0
+    float prev_trail = trail_sl
+    if pos_state == 1
+        float current_sl = low - (atr_sl * sl_mult)
+        trail_sl := math.max(nz(trail_sl, 0), current_sl)
+        if close < trail_sl
+            pos_state := 0
+            trail_sl := na
+    else if pos_state == -1
+        float current_sl = high + (atr_sl * sl_mult)
+        trail_sl := math.min(nz(trail_sl, 1e10), current_sl)
+        if close > trail_sl
+            pos_state := 0
+            trail_sl := na
 
-// Plotagem da Linha de Inércia (Corrigida para não "emendar")
+    if trail_sl == prev_trail
+        flat_count := flat_count + 1
+    else
+        flat_count := 0
+else
+    flat_count := 0
+
+// Lógica de Redução V15.0
+bool reduce_50 = pos_state != 0 and (regime == 2 or flat_count >= 3)
+bool reduce_30 = pos_state != 0 and math.abs(close - trail_sl) > (atr_sl * (sl_mult + 1.0))
+
+// Plotagem da Linha de Inércia
 plot(pos_state == 1  ? trail_sl : na, "Long Trail",  color=color.green, linewidth=2, style=plot.style_linebr)
 plot(pos_state == -1 ? trail_sl : na, "Short Trail", color=color.red,   linewidth=2, style=plot.style_linebr)
 
@@ -115,45 +128,49 @@ plotshape(enter_long, "Ignition Long", shape.triangleup, location.belowbar, colo
 plotshape(enter_short, "Ignition Short", shape.triangledown, location.abovebar, color.red, size=size.small, text="🔥", textcolor=color.red)
 plotshape(exit_trade and not (enter_long or enter_short), "Break", shape.xcross, location.abovebar, color.new(color.gray, 50), size=size.tiny)
 
+// Visualização de Reduções
+plotshape(reduce_50 and not reduce_50[1], "Reduzir 50%", shape.labeldown, location.abovebar, color.orange, size=size.tiny, text="50%", textcolor=color.white)
+plotshape(reduce_30 and not reduce_30[1], "Reduzir 30%", shape.labeldown, location.abovebar, color.blue, size=size.tiny, text="30%", textcolor=color.white)
+
 // --- 4. HUD TABLE ---
 var table hud = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
 
 if barstate.islast
     table.merge_cells(hud, 0, 0, 2, 0)
-    table.cell(hud, 0, 0, syminfo.ticker + " V14.1 | STATE: " + dynamic_state, text_color=state_col, text_size=size.small)
+    table.cell(hud, 0, 0, syminfo.ticker + " V15.0 | STATE: " + dynamic_state, text_color=state_col, text_size=size.small)
 
     table.cell(hud, 0, 1, "FORÇA", text_color=color.gray, text_size=size.small)
     table.cell(hud, 1, 1, "AGORA", text_color=color.gray, text_size=size.small)
-    table.cell(hud, 2, 1, "MARKOV", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 2, 1, "TRANS.", text_color=color.gray, text_size=size.small)
 
     table.cell(hud, 0, 2, "BULL", text_color=color.green, text_size=size.small)
     table.cell(hud, 1, 2, str.tostring(p_bull_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
-    table.cell(hud, 2, 2, str.tostring(p_bull * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 2, regime == 0 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 3, "BEAR", text_color=color.red, text_size=size.small)
     table.cell(hud, 1, 3, str.tostring(p_bear_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
-    table.cell(hud, 2, 3, str.tostring(p_bear * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 3, regime == 1 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 4, "COMP", text_color=color.blue, text_size=size.small)
     table.cell(hud, 1, 4, str.tostring(p_comp_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
-    table.cell(hud, 2, 4, str.tostring(p_comp * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 4, regime == 2 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 5, "EXH", text_color=color.orange, text_size=size.small)
     table.cell(hud, 1, 5, str.tostring(p_exh_i * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
-    table.cell(hud, 2, 5, str.tostring(p_exh * 100, "#.0") + "%", text_color=color.white, text_size=size.small)
+    table.cell(hud, 2, 5, regime == 3 ? "ATV" : "---", text_color=color.white, text_size=size.small)
 
     table.cell(hud, 0, 6, "MASSA", text_color=color.gray, text_size=size.small)
     table.merge_cells(hud, 1, 6, 2, 6)
     table.cell(hud, 1, 6, str.tostring(mass, "#.00") + " (Vol/EMA)", text_color=color.white, text_size=size.small)
 
     table.merge_cells(hud, 0, 7, 2, 7)
-    table.cell(hud, 0, 7, "PURE MARKOV PHYSICS (F=M.A)", text_color=color.gray, text_size=size.tiny)
+    table.cell(hud, 0, 7, "PURE PHYSICS - NO LAG (V15.0)", text_color=color.gray, text_size=size.tiny)
 
 // Alertas
 alertcondition(enter_long, "MPE: Ignition LONG", "Bull mode ON")
 alertcondition(enter_short, "MPE: Ignition SHORT", "Bear mode ON")
 alertcondition(exit_trade, "MPE: Break", "Exit signal")
 
-// Reduções Parciais
-bool exit_50 = (regime == 2) and pos_state != 0
-alertcondition(exit_50, "MPE: Reduzir 50%", "Transition to COMP")
+// Alertas de Redução
+alertcondition(reduce_50 and not reduce_50[1], "MPE: Reduzir 50%", "Atrito Detectado (COMP/FLAT)")
+alertcondition(reduce_30 and not reduce_30[1], "MPE: Reduzir 30%", "Preço Esticado")
