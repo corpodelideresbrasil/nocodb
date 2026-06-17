@@ -69,17 +69,12 @@ class MPRMCalculator:
 
     def calculate_markov(self, df):
         """
-        Suavização de Estados via Cadeia de Markov (Módulo 2 do Manual).
+        Calcula as probabilidades amnésicas (V15.0 - Sem Lag).
+        Remove as EMAs para focar puramente nas forças do estado presente.
         """
-        # Suavização via EMA
+        # Usamos as probabilidades instantâneas diretamente para evitar lag temporal
         for col in ['bull', 'bear', 'comp', 'exh']:
-            df[f'p_{col}'] = self._ema(df[f'p_{col}_i'], self.markov_len)
-
-        # Normalização Final da Cadeia
-        df['sum_markov'] = df[['p_bull', 'p_bear', 'p_comp', 'p_exh']].sum(axis=1)
-
-        for col in ['bull', 'bear', 'comp', 'exh']:
-            df[f'p_{col}'] = np.where(df['sum_markov'] <= 0, 0.25, df[f'p_{col}'] / df['sum_markov'])
+            df[f'p_{col}'] = df[f'p_{col}_i']
 
         return df
 

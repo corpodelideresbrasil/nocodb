@@ -1,6 +1,6 @@
-# Manual do Usuário: Programa Python EFG - Crypto (MPRM V14.1 - Refinado)
+# Manual do Usuário: Programa Python EFG - Crypto (MPRM V15.0 - Pure Physics)
 
-Este programa é uma implementação em Python do modelo **Market Physics Regime Model (MPRM V14.1)**, agora refinado para incorporar as leis de Newton (**F = m.a**) no cálculo de energias. Ele foi desenvolvido sob uma arquitetura amnésica (Markoviana), onde cada decisão é baseada exclusivamente no jogo de energias e forças do estado presente.
+Este programa é uma implementação em Python do modelo **Market Physics Regime Model (MPRM V15.0)**. Esta versão elimina completamente o uso de EMAs (médias móveis) nas probabilidades de estado para remover o lag temporal, focando na física pura do estado presente.
 
 ## 1. Lógica de Sinais: A Engenharia por Trás do Modelo
 
@@ -50,13 +50,12 @@ Para cada candle, isolamos quatro vetores de força independentes:
     -   **Lógica:** Perda de energia por pavios (rejeição). Representa o caos.
     -   **Transição COMP -> EXH:** Significa a dissipação da energia potencial acumulada em briga desordenada (pavios) em vez de movimento direcional. É a "mola que quebrou".
 
-### B. Cadeia de Markov e Inércia (Filtragem de Memória)
-Diferente de indicadores comuns, o MPRM opera na proporção da energia total:
+### B. Cadeia de Markov e Inércia (V15.0 - Sem Lag)
+Diferente de indicadores comuns, o MPRM V15.0 opera na proporção da energia instantânea:
 
 1.  **Soma das Forças:** $Total = F_{bull} + F_{bear} + F_{comp} + F_{exh}$
-2.  **Vetor de Probabilidade Instantânea ($P_i$):** A energia bruta do "Agora".
-3.  **Inércia (Markov):** Aplicamos uma EMA de 20 períodos ($markov\_len$).
-    -   **O que significa:** A inércia define por quanto tempo um movimento tende a persistir. No 1D, uma inércia de 20 candles significa que o "peso" da tendência atual ancora as decisões por cerca de 20 dias, filtrando ruídos intradiários.
+2.  **Probabilidades do Agora ($P_i$):** Representam a distribuição de energia no candle atual.
+3.  **Matriz de Transição:** As decisões não são baseadas em "médias do passado", mas na transição direta entre o estado anterior ($T-1$) e o atual ($T$). Isso permite capturar inversões e ignições no exato momento em que a física do mercado muda.
 
 ### C. Estágio 3: Identificação de Regime e Piso de Ruído
 -   **Regime Dominante:** O estado com o maior percentual no vetor de Markov define o Regime (Bull, Bear, Comp ou Exh).
@@ -64,18 +63,18 @@ Diferente de indicadores comuns, o MPRM opera na proporção da energia total:
 
 ---
 
-## 3. Mapeamento das Transições de Estado (V14.2)
+## 3. Mapeamento das Transições de Estado (V15.0)
 
-O sistema agora analisa a transição do estado anterior ($T-1$) para o atual ($T$):
+O sistema analisa a transição do estado anterior ($T-1$) para o atual ($T$) para inferir a dinâmica futura:
 
 | Transição | Contexto Físico | Decisão de Trade |
 | :--- | :--- | :--- |
-| **BULL -> BULL** | Inércia mantida. | **ENTRAR / MANTER** |
-| **COMP -> BULL** | Ignição (Explosão). | **ENTRAR** |
-| **BULL -> COMP** | Desaceleração (Atrito). | **REDUZIR 50%** |
-| **ANY -> EXH** | Caos / Dissipação. | **FECHAR (TOTAL)** |
-| **EXH -> ANY** | Reorganização. | **AGUARDAR (SEM SYNC)** |
-| **BULL <-> BEAR** | Inversão de Vetor. | **FECHAR / REVERTER** |
+| **BULL -> BULL** | Continuidade de Fluxo. | **ENTRAR / MANTER** |
+| **COMP -> BULL** | Rompimento de Compressão. | **ENTRAR** |
+| **BULL -> COMP** | Perda de Momento (Acúmulo). | **REDUZIR 50%** |
+| **ANY -> EXH** | Dissipação por Entropia. | **FECHAR (TOTAL)** |
+| **EXH -> ANY** | Perda de Assertividade. | **FECHAR / SAIR** |
+| **BULL <-> BEAR** | Inversão de Polaridade. | **FECHAR / REVERTER** |
 
 ---
 

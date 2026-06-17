@@ -69,23 +69,25 @@ class MPRMEngine:
         f_res = last['f_bull_i'] if last['regime'] == 0 else last['f_bear_i'] if last['regime'] == 1 else 0.0
         over_noise = f_res > last['noise_floor']
 
-        # Regras de Entrada (Transições Permitidas)
-        # Permite Ignition se entrar em BULL/BEAR vindo de COMP ou se mantendo em BULL/BEAR (Inércia)
-        # Bloqueia se vier de EXH ou estiver em EXH/COMP
-        valid_transition = False
-        if last['regime'] in [0, 1]:
-            if last['prev_regime'] in [0, 1, 2] and last['prev_regime'] != 3:
-                valid_transition = True
+        # Regras de Entrada (Matriz de Transição V15.0)
+        # Estados: 0: BULL, 1: BEAR, 2: COMP, 3: EXH
+        curr, prev = last['regime'], last['prev_regime']
+
+        is_entry_transition = False
+        if curr == 0: # BULL
+            if prev in [0, 2]: is_entry_transition = True
+        elif curr == 1: # BEAR
+            if prev in [1, 2]: is_entry_transition = True
 
         # Cálculo do Índice de Convicção (Assertividade Esperada)
         # Produto da Força Markoviana pelo excesso de Força Física sobre o ruído
-        strength = last['p_bull'] if last['regime'] == 0 else last['p_bear'] if last['regime'] == 1 else 0.25
+        strength = last['p_bull'] if curr == 0 else last['p_bear'] if curr == 1 else 0.25
         force_ratio = f_res / last['noise_floor'] if last['noise_floor'] > 0 else 1.0
-        conviction = strength * min(2.0, force_ratio) # Limitamos o multiplicador de força para não distorcer
+        conviction = strength * min(2.0, force_ratio)
 
         decision = {
-            'ignition_long': last['regime'] == 0 and valid_transition and over_noise and last['regime_age'] <= 10,
-            'ignition_short': last['regime'] == 1 and valid_transition and over_noise and last['regime_age'] <= 10,
+            'ignition_long': curr == 0 and is_entry_transition and over_noise and last['regime_age'] <= 10,
+            'ignition_short': curr == 1 and is_entry_transition and over_noise and last['regime_age'] <= 10,
             'trail_stop': last['trail_stop'],
             'conviction': conviction,
             'flat_count': last['flat_count'],
@@ -93,22 +95,22 @@ class MPRMEngine:
             'signal_status': "FRESH" if last['regime_age'] <= 10 else "ALERT" if last['regime_age'] <= 20 else "EXPIRED"
         }
 
-        # Lógica de Gestão de Posição (Transições V14.2)
+        # Lógica de Gestão de Posição (Matriz de Transição V15.0)
         if self.active_position:
             price, atr, trail = last['close'], last['atr_sl'], last['trail_stop']
             side = self.active_position['side']
 
-            # 1. Saída Total: Regime EXH ou Inversão Total (BULL <-> BEAR) ou Stop Loss
-            decision['exit_total'] = (last['regime'] == 3) # EXH = Sair sempre
+            # 1. Saída Total: ANY->EXH ou EXH->ANY ou Inversão Total (BULL <-> BEAR) ou Stop Loss
+            decision['exit_total'] = (curr == 3 or prev == 3)
 
             if side == 'LONG':
-                if last['regime'] == 1 or (trail and price < trail): decision['exit_total'] = True
+                if curr == 1 or (trail and price < trail): decision['exit_total'] = True
             else: # SHORT
-                if last['regime'] == 0 or (trail and price > trail): decision['exit_total'] = True
+                if curr == 0 or (trail and price > trail): decision['exit_total'] = True
 
             # 2. Redução 50%: Transição para COMP ou Trail Flat
-            # BULL -> COMP ou BEAR -> COMP = Desaceleração
-            decision['exit_50_flat'] = (last['flat_count'] >= 3) or (last['regime'] == 2)
+            # BULL -> COMP ou BEAR -> COMP = Desaceleração / Acúmulo
+            decision['exit_50_flat'] = (last['flat_count'] >= 3) or (curr == 2)
 
             # 3. Redução 30%: Preço Esticado (Requer afastamento > (Risco Inicial + 1 ATR))
             # Evita reduções imediatas na entrada.
