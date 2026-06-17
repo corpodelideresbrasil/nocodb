@@ -79,10 +79,11 @@ class MPRMCalculator:
 
         return df
 
-    def identify_regime(self, df, h_threshold=0.15):
+    def identify_regime(self, df, h_threshold=0.25):
         """
         Identifica o Regime com Histerese e o Estado Dinâmico (V14.2).
         Histerese: Evita 'flickering' de estados quando as probabilidades estão próximas.
+        Adicionado: Barreira de Energia (Atrito Estático) para evitar mudanças bruscas.
         """
         regimes = []
         # Inicializa com o estado de maior probabilidade no primeiro candle
@@ -90,18 +91,31 @@ class MPRMCalculator:
         current_regime = np.argmax(first_probs)
 
         p_cols = ['p_bull', 'p_bear', 'p_comp', 'p_exh']
+        f_cols = ['f_bull_i', 'f_bear_i', 'f_comp_i', 'f_exh_i']
         probs_matrix = df[p_cols].values
+        forces_matrix = df[f_cols].values
+        noise_matrix = df['noise_floor'].values
 
         for i in range(len(df)):
             probs = probs_matrix[i]
+            forces = forces_matrix[i]
+            noise = noise_matrix[i]
+
             p_curr = probs[current_regime]
             max_idx = np.argmax(probs)
             p_max = probs[max_idx]
+            f_target = forces[max_idx]
 
-            # Lógica de Histerese (Termostato):
-            # Só muda se o novo estado vencer o atual por uma margem (h_threshold)
-            # OU se o estado atual cair abaixo do Piso de Ruído (0.15 para maior resiliência)
-            if (p_max > p_curr + h_threshold) or (p_curr < 0.15):
+            # Barreira de Energia (Atrito Estático):
+            # Para mudar de estado, a força do novo estado deve vencer o ruído médio.
+            # EXH (3) requer 3.0x o ruído (blow-off). Trend (0,1) requer 1.5x (ignição real).
+            mult = 3.0 if max_idx == 3 else 1.5 if max_idx in [0, 1] else 1.0
+            energy_barrier = noise * mult
+            has_energy = f_target > energy_barrier
+
+            # Lógica de Histerese + Barreira de Energia:
+            # Só muda se (Histerese vencida E tem energia suficiente) OU se o estado atual colapsar.
+            if (p_max > p_curr + h_threshold and has_energy) or (p_curr < 0.10):
                 current_regime = max_idx
 
             regimes.append(current_regime)

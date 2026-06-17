@@ -99,8 +99,8 @@ class MPRMEngine:
 
             # 1. Saída Total: Transição DOMINANTE para EXH ou Inversão Total (BULL <-> BEAR) ou Stop Loss
             # Removido "prev == 3" para permitir que o sistema inicie tendências a partir da exaustão sem fechar imediatamente
-            # Exige que EXH tenha probabilidade significativa (>35%) para fechar totalmente
-            decision['exit_total'] = (curr == 3 and last['p_exh'] >= 0.35)
+            # Exige que EXH tenha probabilidade significativa (>50%) para fechar totalmente (Blow-off confirmado)
+            decision['exit_total'] = (curr == 3 and last['p_exh'] >= 0.50)
 
             if side == 'LONG':
                 if curr == 1 or (trail and price < trail): decision['exit_total'] = True
