@@ -73,11 +73,8 @@ class MPRMEngine:
         # Estados: 0: BULL, 1: BEAR, 2: COMP, 3: EXH
         curr, prev = last['regime'], last['prev_regime']
 
-        is_entry_transition = False
-        if curr == 0: # BULL
-            if prev in [0, 2]: is_entry_transition = True
-        elif curr == 1: # BEAR
-            if prev in [1, 2]: is_entry_transition = True
+        # Transição real: Mudança de estado para um regime de tendência (BULL/BEAR)
+        is_entry_transition = (curr != prev) and (curr in [0, 1])
 
         # Cálculo do Índice de Convicção (Assertividade Esperada)
         # Produto da Força Markoviana pelo excesso de Força Física sobre o ruído
@@ -86,8 +83,8 @@ class MPRMEngine:
         conviction = strength * min(2.0, force_ratio)
 
         decision = {
-            'ignition_long': curr == 0 and is_entry_transition and over_noise and last['regime_age'] <= 10,
-            'ignition_short': curr == 1 and is_entry_transition and over_noise and last['regime_age'] <= 10,
+            'ignition_long': curr == 0 and is_entry_transition and over_noise,
+            'ignition_short': curr == 1 and is_entry_transition and over_noise,
             'trail_stop': last['trail_stop'],
             'conviction': conviction,
             'flat_count': last['flat_count'],
