@@ -49,10 +49,11 @@ class MPRMCalculator:
         # Aplicamos massa à compressão: compressão com alto volume = mola muito tensionada
         df['f_comp_i'] = df['f_comp_i'] * df['mass']
 
-        # Exaustão (Wicks vs Body)
+        # Exaustão (Wicks vs Body) - Elevado multiplicador e filtro de significância (0.5 ATR)
         df['wicks'] = (df['high'] - df[['open', 'close']].max(axis=1)) + \
                       (df[['open', 'close']].min(axis=1) - df['low'])
-        df['f_exh_i'] = np.where(df['wicks'] > (df['body_work'] * 2.0), df['wicks'], 0.0)
+        # Só ativa exaustão se o pavio for 3x maior que o corpo E maior que 50% do ATR médio
+        df['f_exh_i'] = np.where((df['wicks'] > (df['body_work'] * 3.0)) & (df['wicks'] > (df['atr_ref'] * 0.5)), df['wicks'], 0.0)
 
         # Normalização Instantânea (O "Agora")
         df['total_i'] = df['f_bull_i'] + df['f_bear_i'] + df['f_comp_i'] + df['f_exh_i']
@@ -78,7 +79,7 @@ class MPRMCalculator:
 
         return df
 
-    def identify_regime(self, df, h_threshold=0.05):
+    def identify_regime(self, df, h_threshold=0.10):
         """
         Identifica o Regime com Histerese e o Estado Dinâmico (V14.2).
         Histerese: Evita 'flickering' de estados quando as probabilidades estão próximas.
@@ -99,8 +100,8 @@ class MPRMCalculator:
 
             # Lógica de Histerese (Termostato):
             # Só muda se o novo estado vencer o atual por uma margem (h_threshold)
-            # OU se o estado atual cair abaixo do Piso de Ruído (0.25 em sistema de 4 estados)
-            if (p_max > p_curr + h_threshold) or (p_curr < 0.25):
+            # OU se o estado atual cair abaixo do Piso de Ruído (0.20 para maior resiliência)
+            if (p_max > p_curr + h_threshold) or (p_curr < 0.20):
                 current_regime = max_idx
 
             regimes.append(current_regime)

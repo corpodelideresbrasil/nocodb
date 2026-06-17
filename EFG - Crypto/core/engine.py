@@ -97,8 +97,9 @@ class MPRMEngine:
             price, atr, trail = last['close'], last['atr_sl'], last['trail_stop']
             side = self.active_position['side']
 
-            # 1. Saída Total: ANY->EXH ou EXH->ANY ou Inversão Total (BULL <-> BEAR) ou Stop Loss
-            decision['exit_total'] = (curr == 3 or prev == 3)
+            # 1. Saída Total: Transição para EXH ou Inversão Total (BULL <-> BEAR) ou Stop Loss
+            # Removido "prev == 3" para permitir que o sistema inicie tendências a partir da exaustão sem fechar imediatamente
+            decision['exit_total'] = (curr == 3)
 
             if side == 'LONG':
                 if curr == 1 or (trail and price < trail): decision['exit_total'] = True
