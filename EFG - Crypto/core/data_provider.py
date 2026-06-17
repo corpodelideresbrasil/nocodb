@@ -16,9 +16,10 @@ class DataProvider:
         except:
             pass
 
-    def fetch_ohlcv(self, symbol, timeframe='1d', limit=100):
+    def fetch_ohlcv(self, symbol, timeframe='1d', limit=500):
         """
         Busca dados de futuros. Binance Futures usa símbolos como BTC/USDT.
+        Aumentado para 500 barras para garantir convergência matemática (EMA/ATR).
         """
         try:
             # Limpa o símbolo

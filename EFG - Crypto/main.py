@@ -15,18 +15,18 @@ def load_assets(filepath):
     return symbols
 
 def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
-    """Função centralizada para imprimir a tabela de ativos e o resumo com coluna de MOTIVO e SYNC."""
+    """Função centralizada para imprimir a tabela de ativos e o resumo com todas as métricas operacionais."""
     if not table_data:
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    # Ajuste para restaurar visibilidade de Regime e Sync conforme pedido do usuário
-    col_width = 185
+    # Ajuste de largura para acomodar todas as colunas solicitadas (LEV, PNL, CONV)
+    col_width = 175
     print("\n" + "="*col_width)
-    print(f" {title} ")
+    print(f" {title.center(col_width)} ")
     print("="*col_width)
 
-    header = f"{'RANK (%)':<10} | {'CONV. (%)':<10} | {'TICKER':<12} | {'REGIME (1D)':<11} | {'SYNC (4h)':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<22} | {'STOP LOSS':<12} | {'LEV':<6} | {'PNL (%)':<10} | {'VALOR (USDT)':<15}"
+    header = f"{'RANK (%)':<10} | {'CONV (%)':<10} | {'TICKER':<12} | {'REGIME':<10} | {'SYNC':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<20} | {'STOP LOSS':<12} | {'LEV':<6} | {'PNL':<10} | {'VALOR':<12}"
 
     print(header)
     print("-" * col_width)
@@ -36,7 +36,10 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         motivo = row.get('motivo', '---')
         pnl_str = row.get('pnl', '---')
         conv_str = row.get('conv', '---')
-        line = f"{row['rank']:<10} | {conv_str:<10} | {row['ticker']:<12} | {row['regime']:<11} | {row['sync']:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<22} | {row['stop']:<12} | {row.get('lev', '---'):<6} | {pnl_str:<10} | {row['qty']:<15}"
+        lev_str = row.get('lev', '---')
+        qty_str = row.get('qty', '---').replace(' USDT', '') # Remove sufixo para poupar espaço
+
+        line = f"{row['rank']:<10} | {conv_str:<10} | {row['ticker']:<12} | {row['regime']:<10} | {row['sync']:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<20} | {row['stop']:<12} | {lev_str:<6} | {pnl_str:<10} | {qty_str:<12}"
         print(line)
 
     print("-" * col_width)
@@ -66,7 +69,7 @@ def main():
     for symbol in symbols:
         try:
             # 1. TIMEFRAME PRINCIPAL (1 DIARIO)
-            df_1d = provider.fetch_ohlcv(symbol, timeframe='1d', limit=100)
+            df_1d = provider.fetch_ohlcv(symbol, timeframe='1d', limit=500)
             if df_1d is None or df_1d.empty: continue
 
             df_1d = calc.calculate_physics(df_1d)
@@ -74,7 +77,7 @@ def main():
             df_1d = calc.identify_regime(df_1d)
 
             # 2. TIMEFRAME DE AJUSTE/PULLBACK (4 HORAS)
-            df_4h = provider.fetch_ohlcv(symbol, timeframe='4h', limit=100)
+            df_4h = provider.fetch_ohlcv(symbol, timeframe='4h', limit=500)
             sync_str = "???"
             if df_4h is not None and not df_4h.empty:
                 df_4h = calc.calculate_physics(df_4h)
@@ -96,10 +99,11 @@ def main():
             is_synced = False
             if df_4h is not None and not df_4h.empty:
                 last_4h = df_4h.iloc[-1]
+                # Sync V15.0: Regime 4H deve ser idêntico ao 1D e Força Instantânea deve ser dominante
                 if last['regime'] == 0: # BULL
-                    is_synced = (last_4h['regime'] == 0 and last_4h['p_bull_i'] >= last_4h['p_bear_i'])
+                    is_synced = (last_4h['regime'] == 0 and last_4h['p_bull_i'] > 0.35)
                 elif last['regime'] == 1: # BEAR
-                    is_synced = (last_4h['regime'] == 1 and last_4h['p_bear_i'] >= last_4h['p_bull_i'])
+                    is_synced = (last_4h['regime'] == 1 and last_4h['p_bear_i'] > 0.35)
 
             stop_val = decision.get('trail_stop')
             stop_str = f"{stop_val:.4f}" if stop_val and not np.isnan(stop_val) else "---"
@@ -158,15 +162,20 @@ def main():
                     'trail_stop_raw': current_trail
                 })
             elif decision['ignition_long'] or decision['ignition_short']:
-                # CRITÉRIO DE ENTRADA TEÓRICO (V14.1 + MTF SYNC):
+                # CRITÉRIO DE ENTRADA TEÓRICO (V15.0 + MTF SYNC):
                 # 1. Força de Markov >= 35%
                 # 2. Estado Dinâmico == EXPANSION
                 # 3. Alinhamento 1D/4H (Sync) para evitar pullback adverso
-                if strength >= 0.35 and last['dynamic_state'] == "EXPANSION":
-                    acao, grupo, motivo = "ENTRAR", 3, "MARKOV >= 35%"
+                # 4. Conviction > 0.5 (Qualidade da Ignição)
+                conviction = decision.get('conviction', 0)
 
-                    if not is_synced:
-                        acao, grupo, motivo = "ESPERAR 4H", 4, "PULLBACK (SEM SYNC)"
+                if strength >= 0.35 and last['dynamic_state'] == "EXPANSION":
+                    if conviction > 0.5:
+                        acao, grupo, motivo = "ENTRAR", 3, "IGNEOUS (C > 0.5)"
+                        if not is_synced:
+                            acao, grupo, motivo = "ESPERAR 4H", 4, "PULLBACK (SEM SYNC)"
+                    else:
+                        acao, grupo, motivo = "IGNIÇÃO FRACA", 4, f"CONV {conviction*100:.1f}%"
 
                     lev = portfolio.calculate_suggested_leverage(strength)
                     margin_needed = portfolio.balance * portfolio.margin_per_asset_pct
@@ -177,7 +186,7 @@ def main():
                             'conv': f"{decision.get('conviction', 0)*100:4.1f}%",
                             'ticker': symbol, 'regime': regime_str, 'sync': sync_str, 'dir': side, 'acao': acao,
                             'motivo': motivo,
-                            'stop': stop_str, 'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
+                            'stop': stop_str, 'lev': f"{lev}x", 'pnl': '---', 'qty': f"{margin_needed * lev:.1f} USDT",
                             'idade': "FRESH", 'grupo': grupo, 'strength': strength, 'price': last['close']
                         })
                         if acao == "ENTRAR": virtual_margin_pool += margin_needed

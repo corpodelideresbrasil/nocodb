@@ -98,21 +98,23 @@ class MPRMEngine:
             side = self.active_position['side']
 
             # 1. Saída Total: Transição DOMINANTE para EXH ou Inversão Total (BULL <-> BEAR) ou Stop Loss
-            # Removido "prev == 3" para permitir que o sistema inicie tendências a partir da exaustão sem fechar imediatamente
             # Exige que EXH tenha probabilidade significativa (>50%) para fechar totalmente (Blow-off confirmado)
-            decision['exit_total'] = (curr == 3 and last['p_exh'] >= 0.50)
+            # Adicionado "Sticky Exit": Se a posição já foi marcada para fechar, ela não volta atrás.
+            exit_total = (curr == 3 and last['p_exh'] >= 0.50)
 
             if side == 'LONG':
-                if curr == 1 or (trail and price < trail): decision['exit_total'] = True
+                if curr == 1 or (trail and price < trail): exit_total = True
             else: # SHORT
-                if curr == 0 or (trail and price > trail): decision['exit_total'] = True
+                if curr == 0 or (trail and price > trail): exit_total = True
+
+            decision['exit_total'] = exit_total
 
             # 2. Redução 50%: Transição para COMP ou Trail Flat
             # BULL -> COMP ou BEAR -> COMP = Desaceleração / Acúmulo
-            decision['exit_50_flat'] = (last['flat_count'] >= 3) or (curr == 2)
+            # Se exit_total estiver ativo, suprimimos as reduções parciais.
+            decision['exit_50_flat'] = not exit_total and ((last['flat_count'] >= 3) or (curr == 2))
 
             # 3. Redução 30%: Preço Esticado (Requer afastamento > (Risco Inicial + 1 ATR))
-            # Evita reduções imediatas na entrada.
-            decision['exit_30_stretch'] = trail and abs(price - trail) > (atr * (self.sl_mult + 1.0))
+            decision['exit_30_stretch'] = not exit_total and trail and abs(price - trail) > (atr * (self.sl_mult + 1.0))
 
         return decision
