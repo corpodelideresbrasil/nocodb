@@ -20,13 +20,13 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    # Ajuste de largura para acomodar todas as colunas solicitadas (LEV, PNL, CONV)
-    col_width = 175
+    # Ajuste de largura para colunas operacionais (Removido REGIME e SYNC conforme solicitado)
+    col_width = 150
     print("\n" + "="*col_width)
     print(f" {title.center(col_width)} ")
     print("="*col_width)
 
-    header = f"{'RANK (%)':<10} | {'CONV (%)':<10} | {'TICKER':<12} | {'REGIME':<10} | {'SYNC':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<20} | {'STOP LOSS':<12} | {'LEV':<6} | {'PNL':<10} | {'VALOR':<12}"
+    header = f"{'RANK (%)':<10} | {'CONV (%)':<10} | {'TICKER':<12} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<22} | {'STOP LOSS':<12} | {'LEV':<6} | {'PNL':<10} | {'VALOR':<12}"
 
     print(header)
     print("-" * col_width)
@@ -37,9 +37,9 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         pnl_str = row.get('pnl', '---')
         conv_str = row.get('conv', '---')
         lev_str = row.get('lev', '---')
-        qty_str = row.get('qty', '---').replace(' USDT', '') # Remove sufixo para poupar espaço
+        qty_str = row.get('qty', '---').replace(' USDT', '')
 
-        line = f"{row['rank']:<10} | {conv_str:<10} | {row['ticker']:<12} | {row['regime']:<10} | {row['sync']:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<20} | {row['stop']:<12} | {lev_str:<6} | {pnl_str:<10} | {qty_str:<12}"
+        line = f"{row['rank']:<10} | {conv_str:<10} | {row['ticker']:<12} | {row['dir']:<6} | {acao:<16} | {motivo:<22} | {row['stop']:<12} | {lev_str:<6} | {pnl_str:<10} | {qty_str:<12}"
         print(line)
 
     print("-" * col_width)
