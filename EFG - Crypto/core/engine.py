@@ -77,10 +77,17 @@ class MPRMEngine:
             if last['prev_regime'] in [0, 1, 2] and last['prev_regime'] != 3:
                 valid_transition = True
 
+        # Cálculo do Índice de Convicção (Assertividade Esperada)
+        # Produto da Força Markoviana pelo excesso de Força Física sobre o ruído
+        strength = last['p_bull'] if last['regime'] == 0 else last['p_bear'] if last['regime'] == 1 else 0.25
+        force_ratio = f_res / last['noise_floor'] if last['noise_floor'] > 0 else 1.0
+        conviction = strength * min(2.0, force_ratio) # Limitamos o multiplicador de força para não distorcer
+
         decision = {
             'ignition_long': last['regime'] == 0 and valid_transition and over_noise and last['regime_age'] <= 10,
             'ignition_short': last['regime'] == 1 and valid_transition and over_noise and last['regime_age'] <= 10,
             'trail_stop': last['trail_stop'],
+            'conviction': conviction,
             'flat_count': last['flat_count'],
             'regime_age': last['regime_age'],
             'signal_status': "FRESH" if last['regime_age'] <= 10 else "ALERT" if last['regime_age'] <= 20 else "EXPIRED"
@@ -103,7 +110,8 @@ class MPRMEngine:
             # BULL -> COMP ou BEAR -> COMP = Desaceleração
             decision['exit_50_flat'] = (last['flat_count'] >= 3) or (last['regime'] == 2)
 
-            # 3. Redução 30%: Preço Esticado
-            decision['exit_30_stretch'] = trail and abs(price - trail) > atr
+            # 3. Redução 30%: Preço Esticado (Requer afastamento > (Risco Inicial + 1 ATR))
+            # Evita reduções imediatas na entrada.
+            decision['exit_30_stretch'] = trail and abs(price - trail) > (atr * (self.sl_mult + 1.0))
 
         return decision

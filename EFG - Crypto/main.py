@@ -20,13 +20,13 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         print(f"\n--- {title}: NENHUM ATIVO PARA EXIBIR ---")
         return
 
-    # Ajuste para incluir coluna SYNC (4h) e LEV
-    col_width = 165
+    # Ajuste para incluir coluna SYNC (4h), LEV, PNL e CONV.
+    col_width = 190
     print("\n" + "="*col_width)
     print(f" {title} ")
     print("="*col_width)
 
-    header = f"{'RANK (%)':<10} | {'TICKER':<12} | {'REGIME (1D)':<11} | {'SYNC (4h)':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<20} | {'STOP LOSS':<12} | {'LEV':<6} | {'VALOR (USDT)':<15}"
+    header = f"{'RANK (%)':<10} | {'CONV. (%)':<10} | {'TICKER':<12} | {'REGIME (1D)':<11} | {'SYNC (4h)':<10} | {'DIR':<6} | {'AÇÃO':<16} | {'MOTIVO':<20} | {'STOP LOSS':<12} | {'LEV':<6} | {'PNL (%)':<10} | {'VALOR (USDT)':<15}"
 
     print(header)
     print("-" * col_width)
@@ -35,7 +35,9 @@ def print_status_table(table_data, portfolio, title="STATUS DO MERCADO"):
         acao = row.get('acao', '---')
         motivo = row.get('motivo', '---')
         sync = row.get('sync', '---')
-        line = f"{row['rank']:<10} | {row['ticker']:<12} | {row['regime']:<11} | {sync:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<20} | {row['stop']:<12} | {row.get('lev', '---'):<6} | {row['qty']:<15}"
+        pnl_str = row.get('pnl', '---')
+        conv_str = row.get('conv', '---')
+        line = f"{row['rank']:<10} | {conv_str:<10} | {row['ticker']:<12} | {row['regime']:<11} | {sync:<10} | {row['dir']:<6} | {acao:<16} | {motivo:<20} | {row['stop']:<12} | {row.get('lev', '---'):<6} | {pnl_str:<10} | {row['qty']:<15}"
         print(line)
 
     print("-" * col_width)
@@ -138,11 +140,20 @@ def main():
                 elif "30%" in acao:
                     target_qty *= 0.7
 
+                # Cálculo de PnL Momentâneo
+                entry_price = active_pos.get('entry_price', last['close'])
+                current_price = last['close']
+                side_mult = 1 if active_pos['side'] == 'LONG' else -1
+                raw_pnl = ((current_price / entry_price) - 1) * side_mult
+                pnl_pct = raw_pnl * 100
+
                 processed_data.append({
                     'rank': f"{active_pos.get('markov_strength', 0)*100:4.1f}%",
+                    'conv': f"{decision.get('conviction', 0)*100:4.1f}%",
                     'ticker': symbol, 'regime': regime_str, 'sync': sync_str, 'dir': active_pos['side'], 'acao': acao,
                     'motivo': motivo,
                     'stop': stop_str, 'lev': f"{int(active_pos['leverage'])}x",
+                    'pnl': f"{pnl_pct:+.2f}%",
                     'qty': f"{target_qty:.1f} USDT", 'idade': f"{active_pos.get('bars_held', 0)} cnd",
                     'grupo': grupo, 'strength': 1.1, 'price': last['close'],
                     'trail_stop_raw': current_trail
@@ -164,6 +175,7 @@ def main():
                     if virtual_margin_pool + margin_needed <= (portfolio.balance * portfolio.max_total_margin_pct):
                         processed_data.append({
                             'rank': f"{strength*100:4.1f}%",
+                            'conv': f"{decision.get('conviction', 0)*100:4.1f}%",
                             'ticker': symbol, 'regime': regime_str, 'sync': sync_str, 'dir': side, 'acao': acao,
                             'motivo': motivo,
                             'stop': stop_str, 'lev': f"{lev}x", 'qty': f"{margin_needed * lev:.1f} USDT",
@@ -182,7 +194,12 @@ def main():
             if row['acao'] == "ENTRAR":
                 if portfolio.can_open_new():
                     if input(f"Confirmar entrada em {row['ticker']}? (s/n): ").lower() == 's':
-                        portfolio.open_position(row['ticker'], row['dir'], row['price'], float(row['rank'].replace('%',''))/100, int(row['lev'].replace('x','')))
+                        exec_price = input(f"Preço de Execução para {row['ticker']} (USDT) [Sugestão {row['price']:.4f}]: ")
+                        try:
+                            final_price = float(exec_price.replace(',', '.'))
+                        except:
+                            final_price = row['price']
+                        portfolio.open_position(row['ticker'], row['dir'], final_price, float(row['rank'].replace('%',''))/100, int(row['lev'].replace('x','')))
 
             elif row['acao'] in ["REDUZIR 50%", "REDUZIR 30%", "FECHAR TOTAL"]:
                 if input(f"Executou {row['acao']} em {row['ticker']}? (s/n): ").lower() == 's':
