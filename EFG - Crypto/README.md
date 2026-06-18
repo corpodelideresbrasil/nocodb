@@ -58,7 +58,22 @@ Este erro ocorre quando as bibliotecas necessárias não estão instaladas no se
 ```bash
 pip install -r requirements.txt
 ```
-Se estiver usando um ambiente virtual (venv), certifique-se de que ele está ativado antes de rodar o comando acima.
+
+### Como ativar o ambiente virtual (venv)?
+Para garantir que as bibliotecas sejam instaladas no lugar certo, você deve ativar o ambiente virtual:
+
+- **No macOS ou Linux:**
+  ```bash
+  source venv/bin/activate
+  ```
+- **No Windows (PowerShell):**
+  ```bash
+  .\venv\Scripts\Activate.ps1
+  ```
+- **No Windows (Prompt de Comando):**
+  ```bash
+  venv\Scripts\activate.bat
+  ```
 
 ---
 *Desenvolvido para alta precisão na termodinâmica de criptoativos.*
