@@ -1,0 +1,10 @@
+# Lista de ativos para monitoramento (um por linha)
+# Formato: SYMBOL/USDT
+BTC/USDT
+ETH/USDT
+SOL/USDT
+BNB/USDT
+ADA/USDT
+XRP/USDT
+DOT/USDT
+LINK/USDT
