@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO GESTÃO INTERATIVA E FINANCEIRA (CORREÇÃO FINAL)
+# SUPERTREND V3.6 - VERSÃO GESTÃO INTELIGENTE (CORES E PERSISTÊNCIA)
 # ==============================================================================
 
 # Cores ANSI
@@ -52,14 +52,14 @@ def save_portfolio(data):
         os.replace(temp_path, path)
     except Exception as e: print(f"❌ Erro ao salvar portfolio: {e}")
 
-def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=1000):
+def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
     try:
         clean_symbol = normalize_symbol(symbol)
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        return df.iloc[:-1]
+        return df.iloc[:-1] # Velas fechadas
     except Exception as e: raise Exception(f"{e}")
 
 def calculate_supertrend(df, period=15, multiplier=1.4):
@@ -97,9 +97,7 @@ def format_pnl(val):
 def run_scanner():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "assets.json")
-    if not os.path.exists(config_path):
-        print("❌ assets.json não encontrado.")
-        return
+    if not os.path.exists(config_path): return
     with open(config_path, "r") as f: assets = json.load(f).get("assets", [])
 
     port_data = load_portfolio()
@@ -132,15 +130,18 @@ def run_scanner():
             st, direction = calculate_supertrend(df)
 
             last_close = df['close'].iloc[-1]
+            prev_close = df['close'].iloc[-2]
             last_st = st[-1]
             last_dir = direction[-1]
             current_prices[norm_sym] = last_close
 
+            # Inércia
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
                 else: break
 
+            # Sinal
             b_desde_sinal = 0
             for k in range(1, 20):
                 if direction[-k] == direction[-k-1]: b_desde_sinal += 1
@@ -148,21 +149,28 @@ def run_scanner():
 
             is_active = norm_sym in positions
             acao, semaforo, pnl_val = "AGUARDAR", "AMARELO", "-"
-            st_display = f"{last_st:.4f}"
+
+            # Lógica de Cores do Stop Loss (Baseado na variação do PREÇO)
+            # A favor (Verde): Long + Preço subiu OU Short + Preço caiu
+            # Contra (Vermelho): Long + Preço caiu OU Short + Preço subiu
+            side = "LONG" if last_dir == -1 else "SHORT"
+            if is_active: side = positions[norm_sym]['side']
+
+            moved_in_favor = (side == "LONG" and last_close > prev_close) or (side == "SHORT" and last_close < prev_close)
+            st_color = GREEN if moved_in_favor else RED
+            if last_close == prev_close: st_color = RESET
+            st_display = f"{st_color}{last_st:.4f}{RESET}"
 
             if is_active:
                 pos = positions[norm_sym]
+                # PnL Linear
                 pnl_val = (last_close/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - last_close/pos['entry_price'])*100
 
                 if c_inercia >= 3 or (last_dir == -1 and pos['side'] == "SHORT") or (last_dir == 1 and pos['side'] == "LONG"):
                     acao, semaforo = f"{BOLD}{RED}FECHAR{RESET}", f"{ORANGE}LARANJA (INÉRCIA){RESET}"
-                    st_display = f"{RED}{last_st:.4f}{RESET}"
                     pending_exits.append(norm_sym)
                 else:
                     acao, semaforo = f"{BOLD}{GREEN}MANTER{RESET}", f"{YELLOW}AMARELO{RESET}"
-                    old_st = pos.get('last_st', last_st)
-                    st_color = GREEN if (pos['side']=="LONG" and last_st > old_st+1e-10) or (pos['side']=="SHORT" and last_st < old_st-1e-10) else (RED if abs(last_st-old_st)>1e-10 else RESET)
-                    st_display = f"{st_color}{last_st:.4f}{RESET}"
                     pos['last_st'] = last_st
             else:
                 if c_inercia < 3:
@@ -172,9 +180,7 @@ def run_scanner():
                     else:
                         acao, semaforo = f"{BOLD}{YELLOW}ENTRAR (OPCIONAL){RESET}", f"{YELLOW}AMARELO{RESET}"
                         type_str = "OPCIONAL"
-
-                    st_display = f"{last_st:.4f}"
-                    pending_entries.append({"symbol": norm_sym, "side": "LONG" if last_dir == -1 else "SHORT", "entry_price": last_close, "last_st": last_st, "type": type_str, "display_name": symbol})
+                    pending_entries.append({"symbol": norm_sym, "side": side, "entry_price": last_close, "last_st": last_st, "type": type_str, "display_name": symbol})
 
             if "AGUARDAR" not in acao:
                 analysis_results.append([idx, symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, format_pnl(pnl_val)])
@@ -187,27 +193,27 @@ def run_scanner():
     if analysis_results:
         print(tabulate(analysis_results, headers=headers, tablefmt="grid"))
     else:
-        print("☕ Nenhuma ação operacional recomendada no momento.")
+        print("☕ Nenhuma ação recomendada.")
 
     print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
 
-    # --- SAÍDAS ---
+    # SAÍDAS
     for symbol in pending_exits:
-        print(f"\n🔔 Recomendação de Saída: {BOLD}{symbol}{RESET}")
+        print(f"\n🔔 Saída: {BOLD}{symbol}{RESET}")
         try:
-            val_in = input(f"💰 Lucro/Prejuízo para {symbol} em USD [Enter p/ pular]: ")
+            val_in = input(f"💰 Lucro/Prejuízo realizado (USD) [Enter p/ pular]: ")
             if val_in.strip():
                 port_data["balance"] += float(val_in)
                 if symbol in positions: del positions[symbol]
                 print(f"✅ {symbol} removido.")
         except: pass
 
-    # --- ENTRADAS (NUMERADO) ---
+    # ENTRADAS
     if pending_entries:
         entry_map = {str(row[0]): normalize_symbol(row[1]) for row in analysis_results if "ENTRAR" in row[4]}
         if entry_map:
             print(f"\n💎 {BOLD}Confirmar Novas Entradas:{RESET}")
-            print("Digite os números das linhas separados por espaço e pressione Enter. '0' para sair.")
+            print("Digite os números das linhas separados por espaço. '0' para sair.")
             try:
                 line = input("👉 Números: ").strip()
                 if line and line != "0":
@@ -224,25 +230,22 @@ def run_scanner():
 
     save_portfolio(port_data)
 
-    # --- REPUBLICAÇÃO ---
+    # REPUBLICAÇÃO
     print("\n" + "="*85)
-    print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO ATUAL: {GREEN}${port_data['balance']:.2f}{RESET}")
+    print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
     final_rows = []
-    # Recarrega para limpar flags
-    final_state = load_portfolio()
-    for sym, pos in final_state["positions"].items():
+    for sym, pos in positions.items():
         price = current_prices.get(sym, pos['entry_price'])
         pnl = (price/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - price/pos['entry_price'])*100
-        status_label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}" if pos.get('is_new') else f"{BOLD}{CYAN}MANTIDA{RESET}"
-        final_rows.append([sym, pos['side'], "-", status_label, f"{price:.4f}", f"{pos['last_st']:.4f}", format_pnl(pnl)])
+        label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}" if pos.get('is_new') else f"{BOLD}{CYAN}MANTIDA{RESET}"
+        final_rows.append([sym, pos['side'], "-", label, f"{price:.4f}", f"{pos['last_st']:.4f}", format_pnl(pnl)])
 
     if final_rows:
         print(tabulate(final_rows, headers=headers[1:], tablefmt="grid"))
 
-    # Limpeza SEGURA da flag is_new (sem mudar tamanho do dict no loop do scanner)
-    for sym in list(port_data["positions"].keys()):
-        if "is_new" in port_data["positions"][sym]:
-            del port_data["positions"][sym]["is_new"]
+    # Limpeza SEGURA da flag is_new
+    for sym in list(positions.keys()):
+        if "is_new" in positions[sym]: del positions[sym]["is_new"]
     save_portfolio(port_data)
     print("="*85 + "\n")
 
