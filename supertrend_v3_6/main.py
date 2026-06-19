@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO GESTÃO INTERATIVA E FINANCEIRA (FINAL)
+# SUPERTREND V3.6 - VERSÃO GESTÃO INTERATIVA E FINANCEIRA (CORREÇÃO FINAL)
 # ==============================================================================
 
 # Cores ANSI
@@ -53,7 +53,6 @@ def save_portfolio(data):
     except Exception as e: print(f"❌ Erro ao salvar portfolio: {e}")
 
 def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=1000):
-    """ Busca 1000 candles para garantir convergência do RMA """
     try:
         clean_symbol = normalize_symbol(symbol)
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
@@ -137,13 +136,11 @@ def run_scanner():
             last_dir = direction[-1]
             current_prices[norm_sym] = last_close
 
-            # Inércia
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
                 else: break
 
-            # Sinal Fresco
             b_desde_sinal = 0
             for k in range(1, 20):
                 if direction[-k] == direction[-k-1]: b_desde_sinal += 1
@@ -155,7 +152,6 @@ def run_scanner():
 
             if is_active:
                 pos = positions[norm_sym]
-                # PnL Linear Padrão
                 pnl_val = (last_close/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - last_close/pos['entry_price'])*100
 
                 if c_inercia >= 3 or (last_dir == -1 and pos['side'] == "SHORT") or (last_dir == 1 and pos['side'] == "LONG"):
@@ -195,75 +191,60 @@ def run_scanner():
 
     print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
 
-    # --- PROCESSAMENTO DE SAÍDAS ---
+    # --- SAÍDAS ---
     for symbol in pending_exits:
         print(f"\n🔔 Recomendação de Saída: {BOLD}{symbol}{RESET}")
         try:
-            val_in = input(f"💰 Lucro/Prejuízo para {symbol} em USD (Ex: 5.5 ou -2.1) [Enter p/ pular]: ")
+            val_in = input(f"💰 Lucro/Prejuízo para {symbol} em USD [Enter p/ pular]: ")
             if val_in.strip():
                 port_data["balance"] += float(val_in)
                 if symbol in positions: del positions[symbol]
                 print(f"✅ {symbol} removido.")
-            else: print("⚠️ Posição mantida.")
-        except: print("⚠️ Erro no valor.")
+        except: pass
 
-    # --- PROCESSAMENTO DE ENTRADAS (NUMERADO) ---
+    # --- ENTRADAS (NUMERADO) ---
     if pending_entries:
         entry_map = {str(row[0]): normalize_symbol(row[1]) for row in analysis_results if "ENTRAR" in row[4]}
-
         if entry_map:
             print(f"\n💎 {BOLD}Confirmar Novas Entradas:{RESET}")
-            print("Digite o número da linha correspondente e pressione Enter. Digite '0' ou Enter vazio para finalizar.")
-            while True:
-                c = input("👉 Número da linha: ").strip()
-                if c == "0" or not c: break
-                if c in entry_map:
-                    asset_norm = entry_map[c]
-                    e = next((item for item in pending_entries if item['symbol'] == asset_norm), None)
-                    if e:
-                        confirm = input(f"   Confirmar entrada em {BOLD}{e['display_name']}{RESET} ({e['side']})? (s/n): ").lower()
-                        if confirm in ['s', 'y']:
-                            positions[e['symbol']] = {
-                                "side": e['side'],
-                                "entry_price": e['entry_price'],
-                                "last_st": e['last_st'],
-                                "is_new": True
-                            }
-                            print(f"   ✅ {e['display_name']} adicionado à carteira.")
-                        else:
-                            print(f"   ❌ {e['display_name']} ignorado.")
-                else:
-                    print(f"   ⚠️ Número {c} inválido ou não é uma entrada.")
+            print("Digite os números das linhas separados por espaço e pressione Enter. '0' para sair.")
+            try:
+                line = input("👉 Números: ").strip()
+                if line and line != "0":
+                    for c in line.split():
+                        if c in entry_map:
+                            asset_norm = entry_map[c]
+                            e = next((item for item in pending_entries if item['symbol'] == asset_norm), None)
+                            if e:
+                                confirm = input(f"   Confirmar {BOLD}{e['display_name']}{RESET} ({e['side']})? (s/n): ").lower()
+                                if confirm in ['s', 'y']:
+                                    positions[e['symbol']] = {"side": e['side'], "entry_price": e['entry_price'], "last_st": e['last_st'], "is_new": True}
+                                    print(f"   ✅ {e['display_name']} adicionado.")
+            except: pass
 
     save_portfolio(port_data)
 
-    # --- REPUBLICAÇÃO FINAL ---
+    # --- REPUBLICAÇÃO ---
     print("\n" + "="*85)
     print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO ATUAL: {GREEN}${port_data['balance']:.2f}{RESET}")
-
     final_rows = []
+    # Recarrega para limpar flags
     final_state = load_portfolio()
     for sym, pos in final_state["positions"].items():
         price = current_prices.get(sym, pos['entry_price'])
         pnl = (price/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - price/pos['entry_price'])*100
-
-        if pos.get('is_new'):
-            status_label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}"
-        else:
-            status_label = f"{BOLD}{CYAN}MANTIDA{RESET}"
-
+        status_label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}" if pos.get('is_new') else f"{BOLD}{CYAN}MANTIDA{RESET}"
         final_rows.append([sym, pos['side'], "-", status_label, f"{price:.4f}", f"{pos['last_st']:.4f}", format_pnl(pnl)])
 
     if final_rows:
         print(tabulate(final_rows, headers=headers[1:], tablefmt="grid"))
-    else:
-        print("\n📭 Nenhuma posição aberta no momento.")
-    print("="*85 + "\n")
 
-    # Limpa flags is_new
-    for sym in port_data["positions"]:
-        if "is_new" in port_data["positions"][sym]: del port_data["positions"][sym]
+    # Limpeza SEGURA da flag is_new (sem mudar tamanho do dict no loop do scanner)
+    for sym in list(port_data["positions"].keys()):
+        if "is_new" in port_data["positions"][sym]:
+            del port_data["positions"][sym]["is_new"]
     save_portfolio(port_data)
+    print("="*85 + "\n")
 
 if __name__ == "__main__":
     run_scanner()
