@@ -1,10 +1,10 @@
 {
-    "balance": 160.0,
+    "balance": 162.0,
     "positions": {
-        "ETHUSDT": {
-            "entry_price": 1700.0,
-            "last_st": 1650.0,
-            "side": "LONG"
+        "SOLUSDT": {
+            "entry_price": 69.34,
+            "last_st": 70.4070981480241,
+            "side": "SHORT"
         }
     }
 }
