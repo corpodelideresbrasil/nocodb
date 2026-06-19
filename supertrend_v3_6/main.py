@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - GESTÃO DE CARTEIRA (BINANCE FUTURES)
+# SUPERTREND V3.6 - GESTÃO DE CARTEIRA COM CONFIRMAÇÃO (BINANCE FUTURES)
 # ==============================================================================
 
 # Cores ANSI para Terminal
@@ -41,7 +41,7 @@ def save_portfolio(portfolio):
     path = os.path.join(script_dir, "portfolio.json")
     with open(path, "w") as f: json.dump(portfolio, f, indent=4)
 
-def fetch_ohlcv(exchange, symbol, timeframe='1h', limit=500):
+def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
     try:
         clean_symbol = symbol.replace("/", "").upper()
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
@@ -78,7 +78,7 @@ def calculate_supertrend(df, period=15, multiplier=1.4):
             else: direction[i], st_line[i] = 1, final_ub[i]
     return st_line, direction
 
-def run_scanner():
+def run_scanner(timeframe='4h'):
     assets = load_assets()
     portfolio = load_portfolio()
 
@@ -89,9 +89,10 @@ def run_scanner():
         exchange = ccxt.kraken()
 
     print(f"\n🚀 {BOLD}SCANNER SUPERTREND V3.6{RESET} - {exchange.id.upper()}")
-    print(f"Monitorando {len(assets)} ativos... [Timeframe: 1h]\n")
+    print(f"Monitorando {len(assets)} ativos... [Timeframe: {timeframe}]\n")
 
     results = []
+    pending_entries = []
     start_time = time.time()
 
     for symbol in assets:
@@ -100,7 +101,7 @@ def run_scanner():
         try:
             curr_sym = symbol
             if exchange.id == 'kraken' and not "/" in symbol: curr_sym = f"{symbol[:-4]}/{symbol[-4:]}"
-            df = fetch_ohlcv(exchange, curr_sym)
+            df = fetch_ohlcv(exchange, curr_sym, timeframe=timeframe)
             st, direction = calculate_supertrend(df)
 
             last_close = df['close'].iloc[-1]
@@ -128,22 +129,19 @@ def run_scanner():
 
             if is_active:
                 pos = portfolio[symbol]
-                # PnL calculado com base na entrada salva
                 pnl = (last_close / pos['entry_price'] - 1) * 100 if pos['side'] == "LONG" else (pos['entry_price'] / last_close - 1) * 100
                 pnl_color = GREEN if pnl > 0 else RED
                 pnl_display = f"{pnl_color}{pnl:+.2f}%{RESET}"
 
-                # Critérios de Fechamento: Flip de tendência ou Inércia
                 if c_inercia >= 3 or side != pos['side']:
                     acao = f"{BOLD}{RED}FECHAR{RESET}"
                     semaforo = f"{ORANGE}LARANJA (INÉRCIA){RESET}"
                     st_display = f"{RED}{last_st:.4f}{RESET}"
-                    portfolio.pop(symbol) # Removido da carteira
+                    portfolio.pop(symbol)
                 else:
                     acao = f"{BOLD}{GREEN}MANTER{RESET}"
                     semaforo = f"{YELLOW}AMARELO{RESET}"
 
-                    # Cor do ST: Verde se moveu a favor, Vermelho se contra
                     old_st = pos['last_st']
                     if (pos['side'] == "LONG" and last_st > old_st) or (pos['side'] == "SHORT" and last_st < old_st):
                         st_color = GREEN
@@ -153,21 +151,20 @@ def run_scanner():
                         st_color = RESET
 
                     st_display = f"{st_color}{last_st:.4f}{RESET}"
-                    pos['last_st'] = last_st # Atualiza para próxima rodada
+                    pos['last_st'] = last_st
             else:
-                # Se não está ativo, verifica se há sinal fresco de entrada
                 if b_desde_sinal <= 2:
                     acao = f"{BOLD}{GREEN}ENTRAR{RESET}"
                     semaforo = f"{GREEN}VERDE (ENTRADA){RESET}"
-                    # Registra entrada no portfólio
-                    portfolio[symbol] = {
+                    st_display = f"{last_st:.4f}"
+                    # Adiciona aos pendentes para confirmação posterior
+                    pending_entries.append({
+                        "symbol": symbol,
                         "side": side,
                         "entry_price": last_close,
                         "last_st": last_st
-                    }
-                    st_display = f"{last_st:.4f}"
+                    })
 
-            # Filtra apenas o que é operacional (IGNORA AGUARDAR)
             if "AGUARDAR" not in acao:
                 results.append([
                     symbol,
@@ -175,11 +172,8 @@ def run_scanner():
                     semaforo, acao, f"{last_close:.4f}", st_display, pnl_display
                 ])
 
-        except Exception as e:
-            # results.append([symbol, "ERRO", "-", "-", "-", "-", str(e)[:20]])
-            pass
+        except Exception: pass
 
-    save_portfolio(portfolio)
     sys.stdout.write("\r" + " " * 50 + "\r")
 
     headers = ["ATIVO", "TENDÊNCIA", "SEMÁFORO", "AÇÃO", "PREÇO ATUAL", "STOP LOSS (ST)", "PNL (%)"]
@@ -188,7 +182,24 @@ def run_scanner():
     else:
         print("\n☕ Sem ações operacionais. Todos os ativos estão em AGUARDAR.")
 
-    print(f"\n✅ Concluído em {time.time() - start_time:.2f}s")
+    print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
+
+    # --- Lógica de Confirmação ---
+    if pending_entries:
+        print(f"\n{BOLD}Novas Entradas Recomendadas:{RESET}")
+        for entry in pending_entries:
+            choice = input(f"❓ Deseja confirmar entrada em {BOLD}{entry['symbol']}{RESET} ({entry['side']}) a {entry['entry_price']:.4f}? (s/n): ").lower()
+            if choice in ['s', 'y']:
+                portfolio[entry['symbol']] = {
+                    "side": entry['side'],
+                    "entry_price": entry['entry_price'],
+                    "last_st": entry['last_st']
+                }
+                print(f"✅ {entry['symbol']} adicionado à carteira.")
+            else:
+                print(f"❌ {entry['symbol']} ignorado.")
+
+    save_portfolio(portfolio)
 
 if __name__ == "__main__":
     run_scanner()
