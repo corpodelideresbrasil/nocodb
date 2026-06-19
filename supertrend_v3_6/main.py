@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO ESTÁVEL (FECHAMENTO DE VELA)
+# SUPERTREND V3.6 - VERSÃO GESTÃO FLEXÍVEL (ENTRADAS MANUAIS)
 # ==============================================================================
 
 # Cores ANSI
@@ -50,7 +50,7 @@ def save_portfolio(data):
         with open(path, "w") as f:
             json.dump(data, f, indent=4)
             f.flush()
-            os.fsync(f.fileno()) # Garante gravação no disco
+            os.fsync(f.fileno())
     except Exception as e:
         print(f"❌ Erro ao salvar: {e}")
 
@@ -61,8 +61,6 @@ def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        # --- ESTABILIDADE: USA APENAS VELAS FECHADAS ---
-        # Remove a última vela (que ainda está em movimento)
         return df.iloc[:-1]
     except Exception as e: raise Exception(f"{e}")
 
@@ -113,7 +111,7 @@ def run_scanner():
         exchange = ccxt.kraken()
 
     print(f"\n🚀 {BOLD}SUPERTREND V3.6{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
-    print(f"Monitorando {len(assets)} ativos... [Timeframe: 4h - Velas Fechadas]\n")
+    print(f"Monitorando {len(assets)} ativos... [Timeframe: 4h]\n")
 
     analysis_results = []
     pending_entries = []
@@ -134,7 +132,7 @@ def run_scanner():
             last_dir = direction[-1]
             side = "LONG" if last_dir == -1 else "SHORT"
 
-            # Inércia: 3 velas parado
+            # Inércia
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
@@ -165,11 +163,26 @@ def run_scanner():
                     st_display = f"{st_color}{last_st:.4f}{RESET}"
                     pos['last_st'] = last_st
             else:
-                if b_desde_sinal <= 2 and c_inercia < 3:
-                    acao, semaforo = f"{BOLD}{GREEN}ENTRAR{RESET}", f"{GREEN}VERDE{RESET}"
-                    st_display = f"{last_st:.4f}"
-                    pending_entries.append({"symbol": norm_sym, "side": side, "entry_price": last_close, "last_st": last_st})
+                # Se NÃO está ativo, permitimos ENTRAR se for Verde ou Amarelo (não Laranja)
+                if c_inercia < 3:
+                    if b_desde_sinal <= 2:
+                        acao, semaforo = f"{BOLD}{GREEN}ENTRAR{RESET}", f"{GREEN}VERDE{RESET}"
+                        type_str = "RECOMENDADO"
+                    else:
+                        # AMARELO agora é mostrado para decisão do usuário
+                        acao, semaforo = f"{BOLD}{YELLOW}ENTRAR (OPCIONAL){RESET}", f"{YELLOW}AMARELO{RESET}"
+                        type_str = "OPCIONAL"
 
+                    st_display = f"{last_st:.4f}"
+                    pending_entries.append({
+                        "symbol": norm_sym,
+                        "side": side,
+                        "entry_price": last_close,
+                        "last_st": last_st,
+                        "type": type_str
+                    })
+
+            # Agora mostramos tudo que não for AGUARDAR (incluindo o Amarelo/Opcional)
             if "AGUARDAR" not in acao:
                 analysis_results.append([symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, pnl_display])
         except Exception: pass
@@ -177,7 +190,7 @@ def run_scanner():
     sys.stdout.write("\r" + " " * 50 + "\r")
     print_table(analysis_results, "AÇÕES RECOMENDADAS")
 
-    # --- Interação e Atualização ---
+    # --- Interação ---
     changed = False
 
     if pending_exits:
@@ -191,19 +204,20 @@ def run_scanner():
             except: print("⚠️ Ignorado.")
 
     if pending_entries:
-        print(f"\n💎 Novas Entradas:")
+        print(f"\n💎 Novas Oportunidades:")
         for entry in pending_entries:
-            choice = input(f"❓ Confirmar {BOLD}{entry['symbol']}{RESET} ({entry['side']})? (s/n): ").lower()
+            # Pergunta se o usuário entrou na operação
+            msg = f"❓ Confirmar entrada em {BOLD}{entry['symbol']}{RESET} [{entry['type']}] ({entry['side']})? (s/n): "
+            choice = input(msg).lower()
             if choice in ['s', 'y']:
                 positions[entry['symbol']] = {"side": entry['side'], "entry_price": entry['entry_price'], "last_st": entry['last_st']}
                 changed = True
-                print(f"✅ {entry['symbol']} adicionado.")
+                print(f"✅ {entry['symbol']} adicionado à carteira.")
 
     if changed:
         save_portfolio(port_data)
-        # Republika a tabela final para conferência
         print("\n" + "="*50)
-        print(f"💼 {BOLD}CARTEIRA ATUALIZADA{RESET} | NOVO SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
+        print(f"💼 {BOLD}CARTEIRA ATUALIZADA{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
         final_list = []
         for sym, pos in positions.items():
             final_list.append([sym, pos['side'], "-", f"{BOLD}{GREEN}POSIÇÃO ABERTA{RESET}", "-", f"{pos['last_st']:.4f}", "-"])

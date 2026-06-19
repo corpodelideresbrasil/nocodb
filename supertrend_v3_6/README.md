@@ -1,14 +1,14 @@
-# Supertrend v3.6 - Portfolio Manager (4H Default)
+# Supertrend v3.6 - Portfolio Manager (Flexível)
 
-Este projeto automatiza a análise do indicador **Supertrend v3.6** em contratos futuros perpetuos da Binance, com foco em gestão de carteira e sinais confirmados.
+Este projeto automatiza a análise do indicador **Supertrend v3.6** em contratos futuros perpétuos da Binance, com foco em gestão de carteira e sinais confirmados.
 
 ## Novidades desta Versão
 
-- **Timeframe 4H**: O padrão de análise foi alterado para 4 horas, ideal para operações de swing trade em cripto.
-- **Confirmação Manual**: Novas entradas (ENTRAR/VENDER) não são adicionadas automaticamente à carteira. O programa solicitará sua confirmação individual (`s/n`) ao final de cada análise.
-- **Gestão de Carteira**: Ações de `MANTER` e `FECHAR` são recomendadas com base nas posições salvas em `portfolio.json`.
+- **Entradas Opcionais (Amarelo)**: Sinais em estado Amarelo não são mais ocultados. Eles aparecem como `ENTRAR (OPCIONAL)`, permitindo que você decida se deseja entrar na operação mesmo após o sinal inicial.
+- **Timeframe 4H**: O padrão de análise é 4 horas (velas fechadas para estabilidade).
+- **Confirmação Manual**: Novas entradas (Verde ou Amarelo) solicitarão confirmação (`s/n`) antes de serem salvas.
+- **Gestão de Carteira**: Ações de `MANTER` e `FECHAR` são recomendadas com base nas posições em `portfolio.json`.
 - **PnL em Tempo Real**: Exibe o lucro/prejuízo das operações abertas.
-- **Feedback Visual**: Cores indicam a saúde da operação e a movimentação do Stop Loss.
 
 ## Como Configurar os Ativos
 
@@ -40,7 +40,8 @@ Edite o arquivo `assets.json` com os símbolos da Binance Futures (ex: `BTCUSDT`
    ```
 
 ## Fluxo de Operação
-1. O scanner analisa os ativos no gráfico de 4H.
-2. Exibe a tabela com recomendações operacionais.
-3. Se houver novas entradas, o programa perguntará: `❓ Deseja confirmar entrada em XXXX? (s/n)`.
-4. Respondendo `s`, o ativo é incluído no `portfolio.json` e passará a ser monitorado com PnL e Trailing Stop na próxima rodada.
+1. O scanner analisa os ativos no gráfico de 4H (apenas velas fechadas).
+2. Exibe a tabela com recomendações: `ENTRAR` (Verde), `ENTRAR (OPCIONAL)` (Amarelo), `MANTER` ou `FECHAR`.
+3. Para cada nova entrada (Verde ou Amarelo), o programa perguntará: `❓ Confirmar entrada em XXXX? (s/n)`.
+4. Ao fechar uma operação, o programa solicitará o lucro/prejuízo realizado para atualizar seu saldo financeiro (início: $160).
+5. Após as interações, uma tabela resumo da carteira atualizada é exibida.
