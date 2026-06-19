@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO GESTÃO UNIFICADA (ENTRADAS E SAÍDAS POR NÚMERO)
+# SUPERTREND V3.6 - VERSÃO GESTÃO CONTÍNUA (MULTI-AÇÃO EM LOOP)
 # ==============================================================================
 
 # Cores ANSI
@@ -33,22 +33,13 @@ def load_portfolio():
     if not os.path.exists(path): return default_data
     try:
         with open(path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if not content: return default_data
-            data = json.loads(content)
+            data = json.load(f)
             if "balance" not in data: data["balance"] = 160.0
             if "positions" not in data: data["positions"] = {}
-            # Normalização reversa de segurança
             clean_pos = {normalize_symbol(k): v for k, v in data["positions"].items()}
             data["positions"] = clean_pos
             return data
-    except json.JSONDecodeError:
-        print(f"❌ {RED}ERRO FATAL: O arquivo portfolio.json está corrompido!{RESET}")
-        print("Para sua segurança, o programa será encerrado. Corrija o JSON manualmente ou delete-o.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"⚠️ Erro ao carregar portfolio: {e}")
-        return default_data
+    except: return default_data
 
 def save_portfolio(data):
     path = get_portfolio_path()
@@ -200,58 +191,62 @@ def run_scanner():
 
     print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
 
-    # --- INTERAÇÃO UNIFICADA ---
+    # --- INTERAÇÃO UNIFICADA EM LOOP ---
     if actions_map:
-        print(f"\n💎 {BOLD}Interação Manual:{RESET}")
-        print("Digite os números das linhas para processar (confirmar ENTRADA ou forçar SAÍDA).")
-        print("Separe por espaço (ex: 1 3). Digite '0' ou Enter para finalizar.")
+        print(f"\n💎 {BOLD}Interação Manual (Múltiplas Ações):{RESET}")
+        print("Digite os números das linhas para processar. Digite '0' ou Enter para ver o resultado final.")
 
-        try:
-            line = input("👉 Seleção: ").strip()
-            if line and line != "0":
-                for c in line.split():
-                    if c in actions_map:
-                        item = actions_map[c]
-                        if item['type'] == "ENTRY":
-                            # Processa Entrada
-                            conf = input(f"   Confirmar ENTRADA em {BOLD}{item['display']}{RESET} ({item['side']})? (s/n): ").lower()
-                            if conf in ['s', 'y']:
-                                positions[item['symbol']] = {"side": item['side'], "entry_price": item['entry_price'], "last_st": item['last_st'], "is_new": True}
-                                print(f"   ✅ {item['display']} adicionado.")
-                        else:
-                            # Processa Saída (Sugerida ou Manual)
-                            conf = input(f"   Confirmar SAÍDA de {BOLD}{item['display']}{RESET}? (s/n): ").lower()
-                            if conf in ['s', 'y']:
-                                try:
-                                    val = float(input(f"   💰 Lucro/Prejuízo realizado para {item['display']} (USD): "))
-                                    port_data["balance"] += val
-                                    if item['symbol'] in positions: del positions[item['symbol']]
-                                    print(f"   ✅ {item['display']} removido.")
-                                except: print("   ⚠️ Erro no valor. Saída cancelada.")
-        except: pass
+        while True:
+            choice = input("👉 Número da linha: ").strip()
+            if not choice or choice == "0": break
 
-    save_portfolio(port_data)
+            if choice in actions_map:
+                item = actions_map[choice]
+
+                if item['type'] == "ENTRY":
+                    conf = input(f"   Confirmar ENTRADA em {BOLD}{item['display']}{RESET} ({item['side']})? (s/n): ").lower()
+                    if conf in ['s', 'y']:
+                        positions[item['symbol']] = {"side": item['side'], "entry_price": item['entry_price'], "last_st": item['last_st'], "is_new": True}
+                        save_portfolio(port_data) # Salva agora
+                        del actions_map[choice] # Remove da lista para não repetir
+                        print(f"   ✅ {item['display']} adicionado.")
+                else:
+                    conf = input(f"   Confirmar SAÍDA de {BOLD}{item['display']}{RESET}? (s/n): ").lower()
+                    if conf in ['s', 'y']:
+                        try:
+                            val_in = input(f"   💰 Lucro/Prejuízo para {item['display']} em USD: ")
+                            if val_in.strip():
+                                port_data["balance"] += float(val_in)
+                                if item['symbol'] in positions: del positions[item['symbol']]
+                                save_portfolio(port_data) # Salva agora
+                                del actions_map[choice] # Remove da lista
+                                print(f"   ✅ {item['display']} removido. Saldo: ${port_data['balance']:.2f}")
+                        except: print("   ⚠️ Erro no valor.")
+            else:
+                print(f"   ⚠️ Número {choice} inválido.")
 
     # --- REPUBLICAÇÃO FINAL ---
     print("\n" + "="*85)
-    print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
+    print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO FINAL: {GREEN}${port_data['balance']:.2f}{RESET}")
     final_rows = []
     # Recarrega do arquivo
     fresh = load_portfolio()
     for sym, pos in fresh["positions"].items():
         price = current_prices.get(sym, pos['entry_price'])
+        # PnL Linear
         pnl = (price/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - price/pos['entry_price'])*100
         label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}" if pos.get('is_new') else f"{BOLD}{CYAN}MANTIDA{RESET}"
         final_rows.append([sym, pos['side'], "-", label, f"{price:.4f}", f"{pos['last_st']:.4f}", format_pnl(pnl)])
 
     if final_rows:
         print(tabulate(final_rows, headers=headers[1:], tablefmt="grid"))
-        # Limpeza da flag is_new
-        for s in list(port_data["positions"].keys()):
-            if "is_new" in port_data["positions"][s]: del port_data["positions"][s]["is_new"]
-        save_portfolio(port_data)
     else:
         print("\n📭 Nenhuma posição aberta.")
+
+    # Limpeza SEGURA da flag is_new
+    for s in list(port_data["positions"].keys()):
+        if "is_new" in port_data["positions"][s]: del port_data["positions"][s]["is_new"]
+    save_portfolio(port_data)
     print("="*85 + "\n")
 
 if __name__ == "__main__":
