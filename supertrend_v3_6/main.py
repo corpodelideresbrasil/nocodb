@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO GESTÃO ROBUSTA (ANTI-SOBREPOSIÇÃO)
+# SUPERTREND V3.6 - VERSÃO ESTÁVEL (FECHAMENTO DE VELA)
 # ==============================================================================
 
 # Cores ANSI
@@ -20,7 +20,6 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 
 def normalize_symbol(symbol):
-    """ Remove barras e coloca em maiúsculo para consistência no portfolio.json """
     return symbol.replace("/", "").upper()
 
 def load_assets():
@@ -35,24 +34,14 @@ def load_assets():
 def load_portfolio():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, "portfolio.json")
-
-    if not os.path.exists(path):
-        return {"balance": 160.0, "positions": {}}
-
+    if not os.path.exists(path): return {"balance": 160.0, "positions": {}}
     try:
         with open(path, "r") as f:
             data = json.load(f)
-            # Garantir que chaves essenciais existem sem resetar o arquivo
             if "balance" not in data: data["balance"] = 160.0
             if "positions" not in data: data["positions"] = {}
             return data
-    except json.JSONDecodeError:
-        print(f"❌ {RED}ERRO FATAL: O arquivo portfolio.json está corrompido!{RESET}")
-        print("Para sua segurança, o programa será encerrado. Corrija o arquivo ou delete-o para iniciar um novo.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Erro inesperado ao carregar portfolio: {e}")
-        sys.exit(1)
+    except: return {"balance": 160.0, "positions": {}}
 
 def save_portfolio(data):
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -60,8 +49,10 @@ def save_portfolio(data):
     try:
         with open(path, "w") as f:
             json.dump(data, f, indent=4)
+            f.flush()
+            os.fsync(f.fileno()) # Garante gravação no disco
     except Exception as e:
-        print(f"❌ {RED}ERRO AO SALVAR PORTFOLIO:{RESET} {e}")
+        print(f"❌ Erro ao salvar: {e}")
 
 def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
     try:
@@ -70,7 +61,9 @@ def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        return df
+        # --- ESTABILIDADE: USA APENAS VELAS FECHADAS ---
+        # Remove a última vela (que ainda está em movimento)
+        return df.iloc[:-1]
     except Exception as e: raise Exception(f"{e}")
 
 def calculate_supertrend(df, period=15, multiplier=1.4):
@@ -100,6 +93,14 @@ def calculate_supertrend(df, period=15, multiplier=1.4):
             else: direction[i], st_line[i] = 1, final_ub[i]
     return st_line, direction
 
+def print_table(results, title="RESULTADOS"):
+    headers = ["ATIVO", "TENDÊNCIA", "SEMÁFORO", "AÇÃO", "PREÇO ATUAL", "STOP LOSS (ST)", "PNL (%)"]
+    print(f"\n--- {BOLD}{title}{RESET} ---")
+    if results:
+        print(tabulate(results, headers=headers, tablefmt="grid"))
+    else:
+        print("Nenhuma ação operacional detectada.")
+
 def run_scanner():
     assets = load_assets()
     port_data = load_portfolio()
@@ -111,13 +112,12 @@ def run_scanner():
     except:
         exchange = ccxt.kraken()
 
-    print(f"\n🚀 {BOLD}SUPERTREND V3.6{RESET} | SALDO ATUAL: {GREEN}${port_data['balance']:.2f}{RESET}")
-    print(f"Monitorando {len(assets)} ativos... [Timeframe: 4h]\n")
+    print(f"\n🚀 {BOLD}SUPERTREND V3.6{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
+    print(f"Monitorando {len(assets)} ativos... [Timeframe: 4h - Velas Fechadas]\n")
 
-    results = []
+    analysis_results = []
     pending_entries = []
     pending_exits = []
-    start_time = time.time()
 
     for symbol in assets:
         norm_sym = normalize_symbol(symbol)
@@ -132,84 +132,82 @@ def run_scanner():
             last_close = df['close'].iloc[-1]
             last_st = st[-1]
             last_dir = direction[-1]
+            side = "LONG" if last_dir == -1 else "SHORT"
 
-            # Inércia
+            # Inércia: 3 velas parado
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
                 else: break
 
-            # Velas desde o flip
+            # Sinal Fresco
             b_desde_sinal = 0
             for k in range(1, 20):
                 if direction[-k] == direction[-k-1]: b_desde_sinal += 1
                 else: break
 
             is_active = norm_sym in positions
-            side = "LONG" if last_dir == -1 else "SHORT"
-
-            acao = "AGUARDAR"
-            semaforo = "AMARELO"
-            st_display = f"{last_st:.4f}"
-            pnl_display = "-"
+            acao, semaforo, pnl_display = "AGUARDAR", "AMARELO", "-"
 
             if is_active:
                 pos = positions[norm_sym]
-                # PnL robusto
-                pnl = (last_close / pos['entry_price'] - 1) * 100 if pos['side'] == "LONG" else (pos['entry_price'] / last_close - 1) * 100
+                pnl = (last_close/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (pos['entry_price']/last_close - 1)*100
                 pnl_display = f"{GREEN if pnl > 0 else RED}{pnl:+.2f}%{RESET}"
 
                 if c_inercia >= 3 or side != pos['side']:
-                    acao = f"{BOLD}{RED}FECHAR{RESET}"
-                    semaforo = f"{ORANGE}LARANJA (INÉRCIA){RESET}"
+                    acao, semaforo = f"{BOLD}{RED}FECHAR{RESET}", f"{ORANGE}LARANJA{RESET}"
                     st_display = f"{RED}{last_st:.4f}{RESET}"
                     pending_exits.append(norm_sym)
                 else:
-                    acao = f"{BOLD}{GREEN}MANTER{RESET}"
-                    semaforo = f"{YELLOW}AMARELO{RESET}"
+                    acao, semaforo = f"{BOLD}{GREEN}MANTER{RESET}", f"{YELLOW}AMARELO{RESET}"
                     old_st = pos['last_st']
-                    st_color = GREEN if (pos['side'] == "LONG" and last_st > old_st + 1e-10) or (pos['side'] == "SHORT" and last_st < old_st - 1e-10) else (RED if abs(last_st - old_st) > 1e-10 else RESET)
+                    st_color = GREEN if (pos['side']=="LONG" and last_st > old_st+1e-10) or (pos['side']=="SHORT" and last_st < old_st-1e-10) else (RED if abs(last_st-old_st)>1e-10 else RESET)
                     st_display = f"{st_color}{last_st:.4f}{RESET}"
                     pos['last_st'] = last_st
             else:
-                # Entrada: Apenas se NÃO está na carteira (norm_sym)
                 if b_desde_sinal <= 2 and c_inercia < 3:
-                    acao = f"{BOLD}{GREEN}ENTRAR{RESET}"
-                    semaforo = f"{GREEN}VERDE (ENTRADA){RESET}"
+                    acao, semaforo = f"{BOLD}{GREEN}ENTRAR{RESET}", f"{GREEN}VERDE{RESET}"
+                    st_display = f"{last_st:.4f}"
                     pending_entries.append({"symbol": norm_sym, "side": side, "entry_price": last_close, "last_st": last_st})
 
             if "AGUARDAR" not in acao:
-                results.append([symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, pnl_display])
-
+                analysis_results.append([symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, pnl_display])
         except Exception: pass
 
     sys.stdout.write("\r" + " " * 50 + "\r")
-    if results:
-        print(tabulate(results, headers=["ATIVO", "TENDÊNCIA", "SEMÁFORO", "AÇÃO", "PREÇO ATUAL", "STOP LOSS (ST)", "PNL (%)"], tablefmt="grid"))
-    else:
-        print("☕ Sem ações operacionais no momento.")
+    print_table(analysis_results, "AÇÕES RECOMENDADAS")
 
-    print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
+    # --- Interação e Atualização ---
+    changed = False
 
-    for symbol in pending_exits:
-        print(f"\n🔔 Recomendação de Saída: {BOLD}{symbol}{RESET}")
-        try:
-            val = float(input(f"💰 Qual o valor de Lucro/Prejuízo realizado para {symbol} em USD? (Ex: 5.50 ou -2.10): "))
-            port_data["balance"] += val
-            positions.pop(symbol)
-            print(f"✅ Saldo atualizado: {GREEN}${port_data['balance']:.2f}{RESET}")
-        except ValueError:
-            print("⚠️ Valor inválido. Posição mantida.")
+    if pending_exits:
+        for symbol in pending_exits:
+            print(f"\n🔔 Recomendação de Saída: {BOLD}{symbol}{RESET}")
+            try:
+                val = float(input(f"💰 Lucro/Prejuízo realizado para {symbol} (USD): "))
+                port_data["balance"] += val
+                positions.pop(symbol)
+                changed = True
+            except: print("⚠️ Ignorado.")
 
     if pending_entries:
-        print(f"\n💎 Novas Entradas Recomendadas:")
+        print(f"\n💎 Novas Entradas:")
         for entry in pending_entries:
-            choice = input(f"❓ Confirmar {BOLD}{entry['symbol']}{RESET} ({entry['side']}) a {entry['entry_price']:.4f}? (s/n): ").lower()
+            choice = input(f"❓ Confirmar {BOLD}{entry['symbol']}{RESET} ({entry['side']})? (s/n): ").lower()
             if choice in ['s', 'y']:
                 positions[entry['symbol']] = {"side": entry['side'], "entry_price": entry['entry_price'], "last_st": entry['last_st']}
+                changed = True
                 print(f"✅ {entry['symbol']} adicionado.")
 
-    save_portfolio(port_data)
+    if changed:
+        save_portfolio(port_data)
+        # Republika a tabela final para conferência
+        print("\n" + "="*50)
+        print(f"💼 {BOLD}CARTEIRA ATUALIZADA{RESET} | NOVO SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
+        final_list = []
+        for sym, pos in positions.items():
+            final_list.append([sym, pos['side'], "-", f"{BOLD}{GREEN}POSIÇÃO ABERTA{RESET}", "-", f"{pos['last_st']:.4f}", "-"])
+        print_table(final_list, "ESTADO DA CARTEIRA")
 
 if __name__ == "__main__":
     run_scanner()
