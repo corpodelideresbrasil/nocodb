@@ -1,13 +1,28 @@
 import sys
 import os
+
+# Add the script's directory to the search path explicitly at the beginning
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
+import pandas as pd
 from tabulate import tabulate
 
-# Add current directory to path to allow imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from data.provider import fetch_ohlcv
-from core.calculator import calculate_supertrend
-from core.engine import generate_signals
+try:
+    from data.provider import fetch_ohlcv
+    from core.calculator import calculate_supertrend
+    from core.engine import generate_signals
+except ImportError as e:
+    print(f"Erro de importação: {e}")
+    print(f"Path atual: {sys.path}")
+    print(f"Diretório do script: {script_dir}")
+    print("Tentando alternativa...")
+    # Tentativa de fallback caso seja executado de fora da pasta
+    sys.path.append(os.path.join(script_dir, '..'))
+    from supertrend_v3_6.data.provider import fetch_ohlcv
+    from supertrend_v3_6.core.calculator import calculate_supertrend
+    from supertrend_v3_6.core.engine import generate_signals
 
 def run_scanner(symbols, timeframe='1h'):
     results = []
