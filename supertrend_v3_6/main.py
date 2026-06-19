@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSÃO GESTÃO INTELIGENTE (CORES E PERSISTÊNCIA)
+# SUPERTREND V3.6 - VERSÃO GESTÃO UNIFICADA (ENTRADAS E SAÍDAS POR NÚMERO)
 # ==============================================================================
 
 # Cores ANSI
@@ -33,13 +33,22 @@ def load_portfolio():
     if not os.path.exists(path): return default_data
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            content = f.read().strip()
+            if not content: return default_data
+            data = json.loads(content)
             if "balance" not in data: data["balance"] = 160.0
             if "positions" not in data: data["positions"] = {}
+            # Normalização reversa de segurança
             clean_pos = {normalize_symbol(k): v for k, v in data["positions"].items()}
             data["positions"] = clean_pos
             return data
-    except: return default_data
+    except json.JSONDecodeError:
+        print(f"❌ {RED}ERRO FATAL: O arquivo portfolio.json está corrompido!{RESET}")
+        print("Para sua segurança, o programa será encerrado. Corrija o JSON manualmente ou delete-o.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"⚠️ Erro ao carregar portfolio: {e}")
+        return default_data
 
 def save_portfolio(data):
     path = get_portfolio_path()
@@ -52,7 +61,7 @@ def save_portfolio(data):
         os.replace(temp_path, path)
     except Exception as e: print(f"❌ Erro ao salvar portfolio: {e}")
 
-def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
+def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=1000):
     try:
         clean_symbol = normalize_symbol(symbol)
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
@@ -113,8 +122,7 @@ def run_scanner():
     print(f"Fonte: {exchange.id.upper()} | Timeframe: 4h\n")
 
     analysis_results = []
-    pending_entries = []
-    pending_exits = []
+    actions_map = {} # Mapeia # da tabela para os dados da operação
     current_prices = {}
     start_time = time.time()
 
@@ -150,37 +158,32 @@ def run_scanner():
             is_active = norm_sym in positions
             acao, semaforo, pnl_val = "AGUARDAR", "AMARELO", "-"
 
-            # Lógica de Cores do Stop Loss (Baseado na variação do PREÇO)
-            # A favor (Verde): Long + Preço subiu OU Short + Preço caiu
-            # Contra (Vermelho): Long + Preço caiu OU Short + Preço subiu
+            # Cor do Stop Loss
             side = "LONG" if last_dir == -1 else "SHORT"
             if is_active: side = positions[norm_sym]['side']
-
             moved_in_favor = (side == "LONG" and last_close > prev_close) or (side == "SHORT" and last_close < prev_close)
-            st_color = GREEN if moved_in_favor else RED
-            if last_close == prev_close: st_color = RESET
-            st_display = f"{st_color}{last_st:.4f}{RESET}"
+            st_display = f"{GREEN if moved_in_favor else RED}{last_st:.4f}{RESET}"
 
             if is_active:
                 pos = positions[norm_sym]
-                # PnL Linear
                 pnl_val = (last_close/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - last_close/pos['entry_price'])*100
 
                 if c_inercia >= 3 or (last_dir == -1 and pos['side'] == "SHORT") or (last_dir == 1 and pos['side'] == "LONG"):
                     acao, semaforo = f"{BOLD}{RED}FECHAR{RESET}", f"{ORANGE}LARANJA (INÉRCIA){RESET}"
-                    pending_exits.append(norm_sym)
+                    actions_map[str(idx)] = {"type": "EXIT", "symbol": norm_sym, "display": symbol}
                 else:
                     acao, semaforo = f"{BOLD}{GREEN}MANTER{RESET}", f"{YELLOW}AMARELO{RESET}"
                     pos['last_st'] = last_st
+                    actions_map[str(idx)] = {"type": "MANUAL_EXIT", "symbol": norm_sym, "display": symbol}
             else:
                 if c_inercia < 3:
                     if b_desde_sinal <= 2:
                         acao, semaforo = f"{BOLD}{GREEN}ENTRAR{RESET}", f"{GREEN}VERDE{RESET}"
-                        type_str = "RECOMENDADO"
+                        t_str = "RECOMENDADO"
                     else:
                         acao, semaforo = f"{BOLD}{YELLOW}ENTRAR (OPCIONAL){RESET}", f"{YELLOW}AMARELO{RESET}"
-                        type_str = "OPCIONAL"
-                    pending_entries.append({"symbol": norm_sym, "side": side, "entry_price": last_close, "last_st": last_st, "type": type_str, "display_name": symbol})
+                        t_str = "OPCIONAL"
+                    actions_map[str(idx)] = {"type": "ENTRY", "symbol": norm_sym, "side": "LONG" if last_dir == -1 else "SHORT", "entry_price": last_close, "last_st": last_st, "display": symbol, "status": t_str}
 
             if "AGUARDAR" not in acao:
                 analysis_results.append([idx, symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, format_pnl(pnl_val)])
@@ -193,48 +196,49 @@ def run_scanner():
     if analysis_results:
         print(tabulate(analysis_results, headers=headers, tablefmt="grid"))
     else:
-        print("☕ Nenhuma ação recomendada.")
+        print("☕ Nenhuma ação operacional no momento.")
 
     print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
 
-    # SAÍDAS
-    for symbol in pending_exits:
-        print(f"\n🔔 Saída: {BOLD}{symbol}{RESET}")
-        try:
-            val_in = input(f"💰 Lucro/Prejuízo realizado (USD) [Enter p/ pular]: ")
-            if val_in.strip():
-                port_data["balance"] += float(val_in)
-                if symbol in positions: del positions[symbol]
-                print(f"✅ {symbol} removido.")
-        except: pass
+    # --- INTERAÇÃO UNIFICADA ---
+    if actions_map:
+        print(f"\n💎 {BOLD}Interação Manual:{RESET}")
+        print("Digite os números das linhas para processar (confirmar ENTRADA ou forçar SAÍDA).")
+        print("Separe por espaço (ex: 1 3). Digite '0' ou Enter para finalizar.")
 
-    # ENTRADAS
-    if pending_entries:
-        entry_map = {str(row[0]): normalize_symbol(row[1]) for row in analysis_results if "ENTRAR" in row[4]}
-        if entry_map:
-            print(f"\n💎 {BOLD}Confirmar Novas Entradas:{RESET}")
-            print("Digite os números das linhas separados por espaço. '0' para sair.")
-            try:
-                line = input("👉 Números: ").strip()
-                if line and line != "0":
-                    for c in line.split():
-                        if c in entry_map:
-                            asset_norm = entry_map[c]
-                            e = next((item for item in pending_entries if item['symbol'] == asset_norm), None)
-                            if e:
-                                confirm = input(f"   Confirmar {BOLD}{e['display_name']}{RESET} ({e['side']})? (s/n): ").lower()
-                                if confirm in ['s', 'y']:
-                                    positions[e['symbol']] = {"side": e['side'], "entry_price": e['entry_price'], "last_st": e['last_st'], "is_new": True}
-                                    print(f"   ✅ {e['display_name']} adicionado.")
-            except: pass
+        try:
+            line = input("👉 Seleção: ").strip()
+            if line and line != "0":
+                for c in line.split():
+                    if c in actions_map:
+                        item = actions_map[c]
+                        if item['type'] == "ENTRY":
+                            # Processa Entrada
+                            conf = input(f"   Confirmar ENTRADA em {BOLD}{item['display']}{RESET} ({item['side']})? (s/n): ").lower()
+                            if conf in ['s', 'y']:
+                                positions[item['symbol']] = {"side": item['side'], "entry_price": item['entry_price'], "last_st": item['last_st'], "is_new": True}
+                                print(f"   ✅ {item['display']} adicionado.")
+                        else:
+                            # Processa Saída (Sugerida ou Manual)
+                            conf = input(f"   Confirmar SAÍDA de {BOLD}{item['display']}{RESET}? (s/n): ").lower()
+                            if conf in ['s', 'y']:
+                                try:
+                                    val = float(input(f"   💰 Lucro/Prejuízo realizado para {item['display']} (USD): "))
+                                    port_data["balance"] += val
+                                    if item['symbol'] in positions: del positions[item['symbol']]
+                                    print(f"   ✅ {item['display']} removido.")
+                                except: print("   ⚠️ Erro no valor. Saída cancelada.")
+        except: pass
 
     save_portfolio(port_data)
 
-    # REPUBLICAÇÃO
+    # --- REPUBLICAÇÃO FINAL ---
     print("\n" + "="*85)
     print(f"💼 {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO: {GREEN}${port_data['balance']:.2f}{RESET}")
     final_rows = []
-    for sym, pos in positions.items():
+    # Recarrega do arquivo
+    fresh = load_portfolio()
+    for sym, pos in fresh["positions"].items():
         price = current_prices.get(sym, pos['entry_price'])
         pnl = (price/pos['entry_price'] - 1)*100 if pos['side']=="LONG" else (1 - price/pos['entry_price'])*100
         label = f"{BOLD}{GREEN}NOVA ENTRADA{RESET}" if pos.get('is_new') else f"{BOLD}{CYAN}MANTIDA{RESET}"
@@ -242,11 +246,12 @@ def run_scanner():
 
     if final_rows:
         print(tabulate(final_rows, headers=headers[1:], tablefmt="grid"))
-
-    # Limpeza SEGURA da flag is_new
-    for sym in list(positions.keys()):
-        if "is_new" in positions[sym]: del positions[sym]["is_new"]
-    save_portfolio(port_data)
+        # Limpeza da flag is_new
+        for s in list(port_data["positions"].keys()):
+            if "is_new" in port_data["positions"][s]: del port_data["positions"][s]["is_new"]
+        save_portfolio(port_data)
+    else:
+        print("\n📭 Nenhuma posição aberta.")
     print("="*85 + "\n")
 
 if __name__ == "__main__":
