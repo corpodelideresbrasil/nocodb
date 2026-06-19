@@ -1,0 +1,38 @@
+{
+    "ETHUSDT": {
+        "side": "LONG",
+        "entry_price": 1706.5,
+        "last_st": 1685.2895101863683,
+        "current_price": 1706.45
+    },
+    "SOLUSDT": {
+        "side": "LONG",
+        "entry_price": 69.37,
+        "last_st": 68.29254567752946,
+        "current_price": 69.37
+    },
+    "BNBUSDT": {
+        "side": "LONG",
+        "entry_price": 577.76,
+        "last_st": 573.9996790453691,
+        "current_price": 577.76
+    },
+    "ADAUSDT": {
+        "side": "LONG",
+        "entry_price": 0.162573,
+        "last_st": 0.16033647764935982,
+        "current_price": 0.162573
+    },
+    "XRPUSDT": {
+        "side": "LONG",
+        "entry_price": 1.14069,
+        "last_st": 1.126006287572852,
+        "current_price": 1.14069
+    },
+    "DOTUSDT": {
+        "side": "LONG",
+        "entry_price": 0.9671,
+        "last_st": 0.9566042353580205,
+        "current_price": 0.9671
+    }
+}
