@@ -8,7 +8,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - GESTÃO FINANCEIRA E PARIDADE (BINANCE FUTURES)
+# SUPERTREND V3.6 - VERSÃO GESTÃO ROBUSTA (ANTI-SOBREPOSIÇÃO)
 # ==============================================================================
 
 # Cores ANSI
@@ -18,6 +18,10 @@ YELLOW = "\033[93m"
 ORANGE = "\033[38;5;208m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
+
+def normalize_symbol(symbol):
+    """ Remove barras e coloca em maiúsculo para consistência no portfolio.json """
+    return symbol.replace("/", "").upper()
 
 def load_assets():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,25 +35,37 @@ def load_assets():
 def load_portfolio():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, "portfolio.json")
-    default_data = {"balance": 160.0, "positions": {}}
 
-    if not os.path.exists(path): return default_data
+    if not os.path.exists(path):
+        return {"balance": 160.0, "positions": {}}
+
     try:
         with open(path, "r") as f:
             data = json.load(f)
+            # Garantir que chaves essenciais existem sem resetar o arquivo
             if "balance" not in data: data["balance"] = 160.0
             if "positions" not in data: data["positions"] = {}
             return data
-    except: return default_data
+    except json.JSONDecodeError:
+        print(f"❌ {RED}ERRO FATAL: O arquivo portfolio.json está corrompido!{RESET}")
+        print("Para sua segurança, o programa será encerrado. Corrija o arquivo ou delete-o para iniciar um novo.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Erro inesperado ao carregar portfolio: {e}")
+        sys.exit(1)
 
 def save_portfolio(data):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(script_dir, "portfolio.json")
-    with open(path, "w") as f: json.dump(data, f, indent=4)
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"❌ {RED}ERRO AO SALVAR PORTFOLIO:{RESET} {e}")
 
 def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=500):
     try:
-        clean_symbol = symbol.replace("/", "").upper()
+        clean_symbol = normalize_symbol(symbol)
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -104,6 +120,7 @@ def run_scanner():
     start_time = time.time()
 
     for symbol in assets:
+        norm_sym = normalize_symbol(symbol)
         sys.stdout.write(f"\r🔍 Analisando: {symbol:10} ")
         sys.stdout.flush()
         try:
@@ -116,19 +133,19 @@ def run_scanner():
             last_st = st[-1]
             last_dir = direction[-1]
 
-            # Inércia: No Pine Script maxInertia = 3 significa contagem >= 3
-            # A contagem incrementa se ta.change(supertrend) == 0
+            # Inércia
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
                 else: break
 
+            # Velas desde o flip
             b_desde_sinal = 0
             for k in range(1, 20):
                 if direction[-k] == direction[-k-1]: b_desde_sinal += 1
                 else: break
 
-            is_active = symbol in positions
+            is_active = norm_sym in positions
             side = "LONG" if last_dir == -1 else "SHORT"
 
             acao = "AGUARDAR"
@@ -137,16 +154,16 @@ def run_scanner():
             pnl_display = "-"
 
             if is_active:
-                pos = positions[symbol]
+                pos = positions[norm_sym]
+                # PnL robusto
                 pnl = (last_close / pos['entry_price'] - 1) * 100 if pos['side'] == "LONG" else (pos['entry_price'] / last_close - 1) * 100
                 pnl_display = f"{GREEN if pnl > 0 else RED}{pnl:+.2f}%{RESET}"
 
-                # Saída: Flip de tendência ou Inércia >= 3
                 if c_inercia >= 3 or side != pos['side']:
                     acao = f"{BOLD}{RED}FECHAR{RESET}"
                     semaforo = f"{ORANGE}LARANJA (INÉRCIA){RESET}"
                     st_display = f"{RED}{last_st:.4f}{RESET}"
-                    pending_exits.append(symbol)
+                    pending_exits.append(norm_sym)
                 else:
                     acao = f"{BOLD}{GREEN}MANTER{RESET}"
                     semaforo = f"{YELLOW}AMARELO{RESET}"
@@ -155,11 +172,11 @@ def run_scanner():
                     st_display = f"{st_color}{last_st:.4f}{RESET}"
                     pos['last_st'] = last_st
             else:
-                # Entrada: Apenas sinal fresco e SEM inércia
+                # Entrada: Apenas se NÃO está na carteira (norm_sym)
                 if b_desde_sinal <= 2 and c_inercia < 3:
                     acao = f"{BOLD}{GREEN}ENTRAR{RESET}"
                     semaforo = f"{GREEN}VERDE (ENTRADA){RESET}"
-                    pending_entries.append({"symbol": symbol, "side": side, "entry_price": last_close, "last_st": last_st})
+                    pending_entries.append({"symbol": norm_sym, "side": side, "entry_price": last_close, "last_st": last_st})
 
             if "AGUARDAR" not in acao:
                 results.append([symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, pnl_display])
@@ -174,7 +191,6 @@ def run_scanner():
 
     print(f"\n✅ Análise concluída em {time.time() - start_time:.2f}s")
 
-    # --- Processamento de Saídas ---
     for symbol in pending_exits:
         print(f"\n🔔 Recomendação de Saída: {BOLD}{symbol}{RESET}")
         try:
@@ -183,9 +199,8 @@ def run_scanner():
             positions.pop(symbol)
             print(f"✅ Saldo atualizado: {GREEN}${port_data['balance']:.2f}{RESET}")
         except ValueError:
-            print("⚠️ Valor inválido. A posição foi mantida no arquivo para próxima rodada.")
+            print("⚠️ Valor inválido. Posição mantida.")
 
-    # --- Processamento de Entradas ---
     if pending_entries:
         print(f"\n💎 Novas Entradas Recomendadas:")
         for entry in pending_entries:
