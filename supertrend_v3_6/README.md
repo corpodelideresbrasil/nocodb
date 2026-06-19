@@ -1,52 +1,49 @@
-# Supertrend v3.6 - Python implementation
+# Supertrend v3.6 - Python implementation (Binance Futures)
 
-Este projeto é uma implementação robusta em Python do indicador **Supertrend v3.6**, otimizado para rodar em qualquer sistema operacional (Windows, Mac, Linux) sem erros de importação.
+Este projeto é uma implementação de alta performance em Python do indicador **Supertrend v3.6**, otimizado para monitorar múltiplos ativos em contratos futuros perpétuos da Binance.
+
+## Novidades da Versão Otimizada
+
+- **Binance Futures**: O sistema agora se conecta diretamente aos contratos perpétuos da Binance (ex: BTCUSDT, ETHUSDT).
+- **Coluna Stop Loss**: Agora exibe o valor exato do Supertrend (Stop Loss) na tabela de resultados.
+- **Feedback em Tempo Real**: O terminal exibe qual ativo está sendo analisado no momento para garantir que o processo está ativo.
+- **Performance**: Algoritmo otimizado com NumPy para processamento ultrarápido de múltiplos ativos.
 
 ## Estrutura do Projeto
 
-- `main.py`: Script consolidado que contém toda a lógica do scanner.
-- `assets.json`: Arquivo de configuração para listar os ativos a serem monitorados.
-- `requirements.txt`: Dependências do projeto (Pandas, NumPy, CCXT, Tabulate).
+- `main.py`: Script consolidado com lógica otimizada.
+- `assets.json`: Arquivo de configuração para listar os ativos (ex: `BTCUSDT`, `ADAUSDT`).
+- `requirements.txt`: Dependências.
 
 ## Como Configurar os Ativos
 
-Para monitorar novas moedas, edite o arquivo `assets.json` na raiz da pasta. Adicione os pares no formato `MOEDA/USDT`:
+Edite o arquivo `assets.json` na raiz da pasta. Adicione os símbolos no padrão Binance Futures (sem barra):
 
 ```json
 {
     "assets": [
-        "BTC/USDT",
-        "ETH/USDT",
-        "ADA/USDT",
-        "SOL/USDT"
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "TONUSDT"
     ]
 }
 ```
 
 ## Como Iniciar
 
-1. **Abrir a pasta do projeto**:
-   No VS Code, vá em `File > Open Folder...` e selecione `supertrend_v3_6`.
+1. **Ativar o Ambiente Virtual**:
+   - `source venv/bin/activate` (Mac/Linux) ou `.\venv\Scripts\Activate.ps1` (Windows)
 
-2. **Criar um Ambiente Virtual**:
-   ```bash
-   python -m venv venv
-   ```
-
-3. **Ativar o Ambiente Virtual**:
-   - **Windows (PowerShell)**: `.\venv\Scripts\Activate.ps1`
-   - **Windows (CMD)**: `venv\Scripts\activate`
-   - **Mac / Linux / Git Bash**: `source venv/bin/activate`
-
-4. **Instalar as Dependências**:
+2. **Instalar as Dependências**:
    ```bash
    pip install -r requirements.txt
    ```
 
-5. **Executar o Scanner**:
+3. **Executar o Scanner**:
    ```bash
    python main.py
    ```
 
 ## Observações
-O scanner utiliza a biblioteca `ccxt` com a exchange **Kraken** por padrão para garantir estabilidade global. Se um ativo não for encontrado, verifique se ele está listado na Kraken.
+O script detecta automaticamente se a Binance está disponível. Caso haja restrições regionais (como em alguns ambientes de teste), ele tentará usar a Kraken como alternativa de demonstração.
