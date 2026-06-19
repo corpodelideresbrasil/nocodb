@@ -1,34 +1,42 @@
 # Supertrend v3.6 - Python implementation
 
-Este projeto é uma implementação em Python do indicador **Supertrend v3.6**, originalmente desenvolvido em Pine Script. Ele automatiza a geração de sinais de compra, venda e encerramento por inércia para múltiplos ativos.
+Este projeto é uma implementação robusta em Python do indicador **Supertrend v3.6**, otimizado para rodar em qualquer sistema operacional (Windows, Mac, Linux) sem erros de importação.
 
 ## Estrutura do Projeto
 
-- `core/`: Motores de cálculo (Supertrend) e lógica de sinais (Inércia).
-- `data/`: Provedor de dados via `ccxt`.
-- `main.py`: Script principal para execução do scanner.
-- `requirements.txt`: Dependências do projeto.
+- `main.py`: Script consolidado que contém toda a lógica do scanner.
+- `assets.json`: Arquivo de configuração para listar os ativos a serem monitorados.
+- `requirements.txt`: Dependências do projeto (Pandas, NumPy, CCXT, Tabulate).
 
-## Como Iniciar no VS Code
+## Como Configurar os Ativos
+
+Para monitorar novas moedas, edite o arquivo `assets.json` na raiz da pasta. Adicione os pares no formato `MOEDA/USDT`:
+
+```json
+{
+    "assets": [
+        "BTC/USDT",
+        "ETH/USDT",
+        "ADA/USDT",
+        "SOL/USDT"
+    ]
+}
+```
+
+## Como Iniciar
 
 1. **Abrir a pasta do projeto**:
-   Abra o VS Code e vá em `File > Open Folder...` e selecione a pasta `supertrend_v3_6`.
+   No VS Code, vá em `File > Open Folder...` e selecione `supertrend_v3_6`.
 
-2. **Criar um Ambiente Virtual (Recomendado)**:
-   Abra o terminal integrado (`Ctrl + '` ou ``Ctrl + Shift + ` ``) e execute:
+2. **Criar um Ambiente Virtual**:
    ```bash
    python -m venv venv
    ```
 
 3. **Ativar o Ambiente Virtual**:
-   - **Windows**:
-     ```bash
-     .\venv\Scripts\activate
-     ```
-   - **macOS/Linux**:
-     ```bash
-     source venv/bin/activate
-     ```
+   - **Windows (PowerShell)**: `.\venv\Scripts\Activate.ps1`
+   - **Windows (CMD)**: `venv\Scripts\activate`
+   - **Mac / Linux / Git Bash**: `source venv/bin/activate`
 
 4. **Instalar as Dependências**:
    ```bash
@@ -40,7 +48,5 @@ Este projeto é uma implementação em Python do indicador **Supertrend v3.6**, 
    python main.py
    ```
 
-## Configurações
-
-Você pode editar a lista de ativos e o timeframe diretamente no arquivo `main.py`.
-O provedor de dados utiliza a biblioteca `ccxt`. Por padrão, está configurado para a exchange **Kraken** para evitar restrições regionais, mas pode ser alterado em `data/provider.py`.
+## Observações
+O scanner utiliza a biblioteca `ccxt` com a exchange **Kraken** por padrão para garantir estabilidade global. Se um ativo não for encontrado, verifique se ele está listado na Kraken.

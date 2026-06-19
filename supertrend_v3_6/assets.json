@@ -1,0 +1,13 @@
+{
+    "assets": [
+        "BTC/USDT",
+        "ETH/USDT",
+        "SOL/USDT",
+        "BNB/USDT",
+        "ADA/USDT",
+        "ONDO/USDT",
+        "XRP/USDT",
+        "DOT/USDT",
+        "NEAR/USDT"
+    ]
+}
