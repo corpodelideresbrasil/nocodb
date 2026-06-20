@@ -9,7 +9,7 @@ import ccxt
 import time
 
 # ==============================================================================
-# SUPERTREND V3.6 - VERSAO GESTAO CONTINUA (MULTI-ACAO EM LOOP)
+# SUPERTREND V3.6 - VERSAO GESTAO INTELIGENTE (COLOR-CODED STOP LOSS)
 # ==============================================================================
 
 # Cores ANSI
@@ -55,6 +55,7 @@ def save_portfolio(data):
     except Exception as e: print(f"x Erro ao salvar portfolio: {e}")
 
 def fetch_ohlcv(exchange, symbol, timeframe='4h', limit=1000):
+    """ Busca 1000 candles para garantir convergencia do RMA """
     try:
         clean_symbol = normalize_symbol(symbol)
         ohlcv = exchange.fetch_ohlcv(clean_symbol, timeframe=timeframe, limit=limit)
@@ -138,11 +139,13 @@ def run_scanner():
             last_dir = direction[-1]
             current_prices[norm_sym] = last_close
 
+            # Inercia (3 velas parado)
             c_inercia = 0
             for k in range(1, 10):
                 if abs(st[-k] - st[-k-1]) < 1e-10: c_inercia += 1
                 else: break
 
+            # Sinal Fresco
             b_desde_sinal = 0
             for k in range(1, 20):
                 if direction[-k] == direction[-k-1]: b_desde_sinal += 1
@@ -151,10 +154,27 @@ def run_scanner():
             is_active = norm_sym in positions
             acao, semaforo, pnl_val = "AGUARDAR", "AMARELO", "-"
 
-            side = "LONG" if last_dir == -1 else "SHORT"
-            if is_active: side = positions[norm_sym]['side']
-            moved_in_favor = (side == "LONG" and last_close > prev_close) or (side == "SHORT" and last_close < prev_close)
-            st_display = f"{GREEN if moved_in_favor else RED}{last_st:.4f}{RESET}"
+            # --- LOGICA DE CORES DO STOP LOSS (ST) ---
+            # Se ja esta no portfolio, compara com o valor anterior gravado.
+            # Se for novo, usa a variacao do preco do ultimo candle como fallback.
+            st_color = RESET
+            if is_active:
+                pos = positions[norm_sym]
+                old_st = pos.get('last_st', last_st)
+                if abs(last_st - old_st) > 1e-10:
+                    # Ganho (Verde): Long + ST subiu OU Short + ST caiu
+                    if (pos['side'] == "LONG" and last_st > old_st) or (pos['side'] == "SHORT" and last_st < old_st):
+                        st_color = GREEN
+                    else:
+                        st_color = RED
+            else:
+                # Fallback para novas entradas: usa variacao do preco
+                side = "LONG" if last_dir == -1 else "SHORT"
+                moved_in_favor = (side == "LONG" and last_close > prev_close) or (side == "SHORT" and last_close < prev_close)
+                st_color = GREEN if moved_in_favor else RED
+                if last_close == prev_close: st_color = RESET
+
+            st_display = f"{st_color}{last_st:.4f}{RESET}"
 
             if is_active:
                 pos = positions[norm_sym]
@@ -165,7 +185,7 @@ def run_scanner():
                     actions_map[str(idx)] = {"type": "EXIT", "symbol": norm_sym, "display": symbol}
                 else:
                     acao, semaforo = f"{BOLD}{GREEN}MANTER{RESET}", f"{YELLOW}AMARELO{RESET}"
-                    pos['last_st'] = last_st
+                    pos['last_st'] = last_st # Atualiza para a proxima rodada
                     actions_map[str(idx)] = {"type": "MANUAL_EXIT", "symbol": norm_sym, "display": symbol}
             else:
                 if c_inercia < 3:
@@ -176,7 +196,7 @@ def run_scanner():
                     actions_map[str(idx)] = {"type": "ENTRY", "symbol": norm_sym, "side": "LONG" if last_dir == -1 else "SHORT", "entry_price": last_close, "last_st": last_st, "display": symbol}
 
             if "AGUARDAR" not in acao:
-                analysis_results.append([idx, symbol, f"{GREEN if last_dir == -1 else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, format_pnl(pnl_val)])
+                analysis_results.append([idx, symbol, f"{GREEN if (last_dir == -1) else RED}{'ALTA' if last_dir == -1 else 'BAIXA'}{RESET}", semaforo, acao, f"{last_close:.4f}", st_display, format_pnl(pnl_val)])
                 idx += 1
         except Exception: pass
 
@@ -190,6 +210,7 @@ def run_scanner():
 
     print(f"\n* Analise concluida em {time.time() - start_time:.2f}s")
 
+    # --- INTERACAO ---
     if actions_map:
         print(f"\n- {BOLD}Interacao Manual (Multiplas Acoes):{RESET}")
         print("Digite os numeros das linhas para processar. Digite '0' ou Enter para ver o resultado final.")
@@ -222,6 +243,9 @@ def run_scanner():
             else:
                 print(f"   x Numero {choice} invalido.")
 
+    save_portfolio(port_data)
+
+    # --- REPUBLICAO FINAL ---
     print("\n" + "="*85)
     print(f"* {BOLD}ESTADO ATUALIZADO DA CARTEIRA{RESET} | SALDO FINAL: {GREEN}${port_data['balance']:.2f}{RESET}")
     final_rows = []
@@ -234,9 +258,8 @@ def run_scanner():
 
     if final_rows:
         print(tabulate(final_rows, headers=headers[1:], tablefmt="grid"))
-    else:
-        print("\n* Nenhuma posicao aberta.")
 
+    # Limpeza SEGURA da flag is_new
     for s in list(port_data["positions"].keys()):
         if "is_new" in port_data["positions"][s]: del port_data["positions"][s]["is_new"]
     save_portfolio(port_data)

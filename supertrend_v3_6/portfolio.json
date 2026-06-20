@@ -1,4 +1,10 @@
 {
     "balance": 162.0,
-    "positions": {}
+    "positions": {
+        "SOLUSDT": {
+            "entry_price": 71.59,
+            "last_st": 69.21835804264965,
+            "side": "LONG"
+        }
+    }
 }
